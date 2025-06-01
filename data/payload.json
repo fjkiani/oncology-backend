@@ -1,0 +1,259 @@
+{
+  "unmet_criteria": [
+    {
+      "criterion": "Patient must be > 18 years of age and < 60 years of age.",
+      "reasoning": "Patient DOB 1965-03-15, current age calculated as potentially >60."
+    },
+    {
+      "criterion": "Patient must not have a history of allergic reactions to doxorubicin.",
+      "reasoning": "Allergies list needs to be checked for doxorubicin."
+    }
+  ],
+  "unclear_criteria": [
+    {
+      "criterion": "Patient has adequate organ function as defined by recent lab values (ANC > 1.5 x 10^9/L, Platelets > 100 x 10^9/L, Hemoglobin > 9 g/dL).",
+      "reasoning": "LLM could not find specific lab values in the provided snippet, needs verification."
+    },
+    {
+      "criterion": "ECOG performance status of 0 or 1.",
+      "reasoning": "Performance status not explicitly stated in the limited notes provided."
+    },
+    {
+      "criterion": "Patient must have activating BRAF mutation.",
+      "reasoning": "Initial screen did not confirm functional status of BRAF mutation."
+    },
+    {
+      "criterion": "Patient must be EGFR wild-type.",
+      "reasoning": "Initial screen flagged potential EGFR mutation, requires confirmation of wild-type status."
+    },
+    {
+      "criterion": "Requires pathogenic alteration in TP53.",
+      "reasoning": "TP53 status requires detailed assessment of pathogenicity."
+    },
+    {
+      "criterion": "Absence of activating KRAS mutation.",
+      "reasoning": "Need to confirm KRAS mutational status is wild-type or non-activating."
+    },
+    {
+      "criterion": "Patient must have Alanine Aminotransferase (ALT) <= 3 times the upper limit of normal (ULN)",
+      "reasoning": "ALT lab value needs to be checked and compared to ULN."
+    },
+    {
+      "criterion": "Patient must have Creatinine Clearance > 50 mL/min",
+      "reasoning": "Creatinine Clearance lab value not directly available, may need calculation or other kidney function tests."
+    },
+    {
+      "criterion": "Patient must not have experienced significant weight loss (>10%) in the last 3 months.",
+      "reasoning": "Weight history not explicitly stated."
+    },
+    {
+      "criterion": "Tumor must be HER2-negative.",
+      "reasoning": "HER2 status not found in provided molecular data snippet."
+    }
+  ],
+  "patient_data": {
+    "patientId": "PAT12345",
+    "demographics": {
+      "name": "Jane Doe",
+      "dob": "1965-03-15",
+      "sex": "Female",
+      "contact": "555-123-4567",
+      "address": "123 Main St, Anytown, USA"
+    },
+    "diagnosis": {
+      "primary": "Stage III Invasive Ductal Carcinoma (Breast)",
+      "diagnosedDate": "2023-01-20",
+      "status": "Active Treatment"
+    },
+    "medicalHistory": [
+      "Hypertension (controlled)",
+      "Type 2 Diabetes (well-managed)",
+      "Appendectomy (1995)"
+    ],
+    "currentMedications": [
+      {
+        "name": "Lisinopril",
+        "dosage": "10mg",
+        "frequency": "Daily"
+      },
+      {
+        "name": "Metformin",
+        "dosage": "500mg",
+        "frequency": "Twice Daily"
+      },
+      {
+        "name": "Letrozole",
+        "dosage": "2.5mg",
+        "frequency": "Daily"
+      }
+    ],
+    "allergies": [
+      "Penicillin (Rash)",
+      "Shellfish (Anaphylaxis)"
+    ],
+    "recentLabs": [
+      {
+        "panelName": "Complete Blood Count (CBC)",
+        "orderDate": "2024-07-25",
+        "resultDate": "2024-07-25",
+        "status": "Final",
+        "components": [
+          {"test": "WBC", "value": 6.5, "unit": "K/uL", "refRange": "4.0-11.0", "flag": "Normal"},
+          {"test": "RBC", "value": 4.2, "unit": "M/uL", "refRange": "4.0-5.5", "flag": "Normal"},
+          {"test": "Hgb", "value": 12.1, "unit": "g/dL", "refRange": "12.0-16.0", "flag": "Normal"},
+          {"test": "Plt", "value": 250, "unit": "K/uL", "refRange": "150-400", "flag": "Normal"}
+        ],
+        "interpretation": "Within normal limits."
+      },
+      {
+        "panelName": "Comprehensive Metabolic Panel (CMP)",
+        "orderDate": "2024-07-25",
+        "resultDate": "2024-07-25",
+        "status": "Final",
+        "components": [
+          {"test": "Glucose", "value": 110, "unit": "mg/dL", "refRange": "70-100", "flag": "High"},
+          {"test": "Creatinine", "value": 0.9, "unit": "mg/dL", "refRange": "0.6-1.2", "flag": "Normal"},
+          {"test": "ALT", "value": 25, "unit": "U/L", "refRange": "10-40", "flag": "Normal"}
+        ],
+        "interpretation": "Glucose elevated, consistent with history of T2DM. Monitor."
+      },
+      {
+        "panelName": "Tumor Marker CA 27-29",
+        "orderDate": "2024-07-15",
+        "resultDate": "2024-07-16",
+        "status": "Final",
+        "components": [
+          {"test": "CA 27-29", "value": 35, "unit": "U/mL", "refRange": "< 38", "flag": "Normal"}
+        ],
+        "interpretation": "Baseline within normal range."
+      }
+    ],
+    "imagingStudies": [
+      {
+        "studyId": "IMG78901",
+        "type": "Mammogram",
+        "modality": "MG",
+        "date": "2024-07-10",
+        "status": "Final Report",
+        "reportText": "Findings: Suspicious clustered microcalcifications in the right breast upper outer quadrant, approximately 1.5 cm lesion. Impression: Highly suspicious for malignancy (BI-RADS 5). Recommendation: Ultrasound-guided core biopsy.",
+        "imageAccess": {
+          "pacsSystem": "MainPACS",
+          "accessionNumber": "A12345678",
+          "studyInstanceUID": "1.2.840.113619.2.55.3.28311..."
+        }
+      },
+      {
+        "studyId": "IMG78902",
+        "type": "CT Chest/Abdomen/Pelvis w/ Contrast",
+        "modality": "CT",
+        "date": "2024-07-20",
+        "status": "Final Report",
+        "reportText": "Findings: No evidence of thoracic, abdominal, or pelvic metastatic disease. Stable postsurgical changes from prior appendectomy. Impression: No definite metastatic disease.",
+        "imageAccess": {
+          "pacsSystem": "MainPACS",
+          "accessionNumber": "A12345679",
+          "studyInstanceUID": "1.2.840.113619.2.55.3.28312..."
+        }
+      }
+    ],
+    "patientGeneratedHealthData": {
+      "source": "Apple HealthKit / Fitbit API",
+      "lastSync": "2024-07-30T08:00:00Z",
+      "summary": {
+        "averageStepsLast7Days": 4500,
+        "averageRestingHeartRateLast7Days": 68,
+        "averageSleepHoursLast7Days": 6.5,
+        "significantEvents": [
+          {"date": "2024-07-29", "type": "ActivityAlert", "detail": "Steps significantly below baseline (2000 vs 5000 avg)"},
+          {"date": "2024-07-28", "type": "SleepAlert", "detail": "Reported poor sleep quality via linked app"}
+        ]
+      }
+    },
+    "notes": [
+      {
+        "noteId": "NOTE001",
+        "date": "2024-07-28",
+        "provider": "Dr. Adams (Oncology)",
+        "type": "Progress Note",
+        "text": "Patient reviewed treatment plan (AC-T chemotherapy). Tolerating initial cycle well with minor nausea managed by Zofran. Discussed importance of hydration and monitoring for fever. Reviewed recent labs and imaging - CT negative for mets, awaiting biopsy results from mammogram finding. Patient reports stable energy levels, step count slightly down per wearable data (discussed potential fatigue). Scheduled follow-up post-cycle 2."
+      },
+      {
+        "noteId": "NOTE002",
+        "date": "2024-07-20",
+        "provider": "Dr. Baker (PCP)",
+        "type": "Follow-up Note",
+        "text": "Routine follow-up. BP and A1c stable. Reviewed oncology plan. Reinforced supportive care measures."
+      }
+    ],
+    "mutations": [
+      {
+        "unique_variant_id": "BRAF_V600E_1",
+        "hugo_gene_symbol": "BRAF",
+        "variant_type": "Missense_Mutation",
+        "protein_change": "p.V600E",
+        "chromosome": "7",
+        "start_position": 140453136,
+        "end_position": 140453136,
+        "reference_allele": "T",
+        "variant_allele": "A",
+        "variant_classification": "Missense_Mutation"
+      },
+      {
+        "unique_variant_id": "EGFR_L858R_1",
+        "hugo_gene_symbol": "EGFR",
+        "variant_type": "Missense_Mutation",
+        "protein_change": "p.L858R",
+        "chromosome": "7",
+        "start_position": 55259515,
+        "end_position": 55259515,
+        "reference_allele": "T",
+        "variant_allele": "G",
+        "variant_classification": "Missense_Mutation"
+      },
+      {
+        "unique_variant_id": "TP53_R196*_1",
+        "hugo_gene_symbol": "TP53",
+        "variant_type": "Nonsense_Mutation",
+        "protein_change": "p.R196*",
+        "chromosome": "17",
+        "start_position": 7578406,
+        "end_position": 7578406,
+        "reference_allele": "C",
+        "variant_allele": "T",
+        "variant_classification": "Nonsense_Mutation"
+      },
+      {
+        "unique_variant_id": "TP53_P72R_1",
+        "hugo_gene_symbol": "TP53",
+        "variant_type": "Missense_Mutation",
+        "protein_change": "p.P72R",
+        "chromosome": "17",
+        "start_position": 7579312,
+        "end_position": 7579312,
+        "reference_allele": "C",
+        "variant_allele": "G",
+        "variant_classification": "Missense_Mutation"
+      }
+    ]
+  },
+  "trial_data": {
+    "nct_id": "NCT00TEST001",
+    "brief_title": "Mock Trial for Deep Dive Testing",
+    "official_title": "A Phase III, Randomized, Double-Blind, Placebo-Controlled, Multi-Center Study to Evaluate the Efficacy and Safety of TestDrug in Patients with Advanced Non-Small Cell Lung Cancer",
+    "brief_summary": "This is a test trial.",
+    "detailed_description": "A full description of the test trial design and objectives.",
+    "overall_status": "Recruiting",
+    "phase": "Phase 3",
+    "study_type": "Interventional",
+    "eligibility_criteria": "...",
+    "principal_investigator": "Dr. AI Test",
+    "primary_completion_date": "2025-12-31",
+    "study_first_posted_date": "2023-01-01",
+    "last_update_posted_date": "2024-07-01",
+    "keywords": ["Test", "Mock", "Deep Dive"],
+    "arm_groups": [{"arm_group_label": "Experimental", "description": "TestDrug + Standard of Care"}, {"arm_group_label": "Placebo", "description": "Placebo + Standard of Care"}],
+    "interventions": [{"intervention_type": "Drug", "intervention_name": "TestDrug", "description": "TestDrug 200mg IV Q3W"}],
+    "outcome_measures": [{"measure": "Overall Survival", "time_frame": "Up to 5 years", "description": "Time from randomization to death from any cause."}],
+    "locations": [{"facility": "Test Cancer Center", "city": "Testville", "state": "TS", "country": "USA"}]
+  }
+}

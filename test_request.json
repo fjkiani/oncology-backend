@@ -1,0 +1,104 @@
+{
+  "query": "locally advanced non-small cell lung cancer",
+  "patient_context": {
+    "patientId": "PAT12345",
+    "demographics": {
+      "name": "Jane Doe",
+      "dob": "1965-03-15",
+      "sex": "Female",
+      "contact": "555-123-4567",
+      "address": "123 Main St, Anytown, USA"
+    },
+    "diagnosis": {
+        "primary": "Stage III Non-Small Cell Lung Cancer (NSCLC)",
+        "diagnosedDate": "2023-05-10",
+        "status": "Pre-treatment"
+    },
+    "medicalHistory": [
+      "Hypertension (controlled)",
+      "Type 2 Diabetes (well-managed)",
+      "Appendectomy (1995)"
+    ],
+    "currentMedications": [
+      { "name": "Lisinopril", "dosage": "10mg", "frequency": "Daily" },
+      { "name": "Metformin", "dosage": "500mg", "frequency": "Twice Daily" }
+    ],
+    "allergies": [
+      "Penicillin (Rash)",
+      "Shellfish (Anaphylaxis)"
+    ],
+    "recentLabs": [
+      {
+        "panelName": "Complete Blood Count (CBC)",
+        "orderDate": "2024-07-25",
+        "resultDate": "2024-07-25",
+        "status": "Final",
+        "components": [
+          { "test": "WBC", "value": 6.5, "unit": "K/uL", "refRange": "4.0-11.0", "flag": "Normal" },
+          { "test": "RBC", "value": 4.2, "unit": "M/uL", "refRange": "4.0-5.5", "flag": "Normal" },
+          { "test": "Hgb", "value": 12.1, "unit": "g/dL", "refRange": "12.0-16.0", "flag": "Normal" },
+          { "test": "Plt", "value": 250, "unit": "K/uL", "refRange": "150-400", "flag": "Normal" },
+          { "test": "ECOG Performance Status", "value": 1, "flag": "Normal" }
+        ],
+        "interpretation": "Within normal limits. ECOG 1."
+      },
+      {
+        "panelName": "Comprehensive Metabolic Panel (CMP)",
+        "orderDate": "2024-07-25",
+        "resultDate": "2024-07-25",
+        "status": "Final",
+        "components": [
+          { "test": "Glucose", "value": 110, "unit": "mg/dL", "refRange": "70-100", "flag": "High" },
+          { "test": "Creatinine", "value": 0.9, "unit": "mg/dL", "refRange": "0.6-1.2", "flag": "Normal" },
+          { "test": "ALT", "value": 25, "unit": "U/L", "refRange": "10-40", "flag": "Normal" }
+        ],
+        "interpretation": "Glucose elevated, consistent with history of T2DM. Monitor."
+      }
+    ],
+    "imagingStudies": [
+       {
+         "studyId": "IMG78901",
+         "type": "PET/CT",
+         "modality": "PT",
+         "date": "2024-07-10",
+         "status": "Final Report",
+         "reportText": "Findings: Hypermetabolic primary tumor in the right upper lobe measuring 3.5 cm. Hypermetabolic mediastinal lymphadenopathy noted (stations 4R, 7). No distant metastases identified. Impression: Stage III NSCLC.",
+         "imageAccess": {
+           "pacsSystem": "MainPACS",
+           "accessionNumber": "A12345678",
+           "studyInstanceUID": "1.2.840.113619.2.55.3.28311..."
+         }
+       },
+       {
+         "studyId": "IMG78902",
+         "type": "CT Head w/ Contrast",
+         "modality": "CT",
+         "date": "2024-07-20",
+         "status": "Final Report",
+         "reportText": "Findings: No evidence of intracranial metastases.",
+         "imageAccess": {
+           "pacsSystem": "MainPACS",
+           "accessionNumber": "A12345679",
+           "studyInstanceUID": "1.2.840.113619.2.55.3.28312..."
+         }
+       }
+    ],
+    "patientGeneratedHealthData": {
+        "source": "Apple HealthKit / Fitbit API",
+        "lastSync": "2024-07-30T08:00:00Z",
+        "summary": {
+          "averageStepsLast7Days": 4500,
+          "averageRestingHeartRateLast7Days": 68,
+          "averageSleepHoursLast7Days": 6.5,
+          "significantEvents": [
+            { "date": "2024-07-29", "type": "ActivityAlert", "detail": "Steps significantly below baseline (2000 vs 5000 avg)" },
+            { "date": "2024-07-28", "type": "SleepAlert", "detail": "Reported poor sleep quality via linked app" }
+          ]
+        }
+    },
+    "notes": [
+      { "noteId": "NOTE001", "date": "2024-07-28", "provider": "Dr. Adams (Oncology)", "type": "Consult Note", "text": "Patient presents for discussion of new Stage III NSCLC diagnosis. Reviewed PET/CT findings and staging. Discussed treatment options including concurrent chemoradiation vs induction chemo followed by surgery/radiation. Patient is ECOG 1. Plan: Obtain tissue biopsy for molecular markers (PD-L1, EGFR, ALK, etc.). Schedule pulmonary function tests. Discuss case at tumor board." },
+      { "noteId": "NOTE002", "date": "2024-07-20", "provider": "Dr. Baker (PCP)", "type": "Follow-up Note", "text": "Routine follow-up. Discussed new lung cancer diagnosis. Coordinated care with oncology. BP stable." }
+    ]
+  }
+}
