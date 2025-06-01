@@ -32,13 +32,16 @@ dotenv_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=dotenv_path)
 print(f"Attempting to load .env from: {dotenv_path}") # Add print statement
 
-# SQLITE_DB_PATH = "backend/db/trials.db" # Old relative path
-SQLITE_DB_PATH = str(Path(__file__).resolve().parent.parent / "data" / "clinical_trials.db") # Standardized path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent # oncology-coPilot-main
-# CHROMA_DB_PATH = str(PROJECT_ROOT / "chroma_db")
-CHROMA_DB_PATH = str(PROJECT_ROOT / "backend" / "data" / "chroma_data") # Standardized path within backend
+# Define paths assuming the application root in the container is /app
+# and this agent is at /app/backend/agents/clinical_trial_agent.py
+
+# Path to the root of the deployed application (/app)
+APP_ROOT_IN_CONTAINER = Path(__file__).resolve().parent.parent.parent
+
+SQLITE_DB_PATH = str(APP_ROOT_IN_CONTAINER / "backend" / "data" / "clinical_trials.db")
+CHROMA_DB_PATH = str(APP_ROOT_IN_CONTAINER / "backend" / "data" / "chroma_data")
 CHROMA_COLLECTION_NAME = "clinical_trials_eligibility"
-EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
+EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2' # This seems unused if Google Embeddings are primary
 N_CHROMA_RESULTS = 10 # Number of results to fetch from ChromaDB
 # LLM Configuration
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
