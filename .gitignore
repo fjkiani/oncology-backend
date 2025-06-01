@@ -78,9 +78,9 @@ build/
 *.swo
 
 # Database & Large Data Files
-*.db
-*.sqlite3
-data/chroma_data/
+# *.db
+# *.sqlite3
+# data/chroma_data/
 data/brca_tcga_clinical_data.json
 data/brca_tcga_clinical_data.tsv
 

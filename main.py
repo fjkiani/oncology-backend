@@ -19,7 +19,7 @@ import uuid
 
 # --- Explicitly add project root to sys.path --- 
 # This helps resolve module imports when running with uvicorn from the project root
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     print(f"Adding {PROJECT_ROOT} to sys.path")
     sys.path.insert(0, PROJECT_ROOT)
