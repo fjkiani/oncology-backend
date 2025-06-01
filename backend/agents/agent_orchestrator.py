@@ -18,7 +18,7 @@ from .patient_education_draft_agent import PatientEducationDraftAgent
 from .integrative_medicine_agent import IntegrativeMedicineAgent
 from .crispr_agent import CRISPRAgent
 from .lab_order_agent import LabOrderAgent
-from ..config import constants
+from config import constants
 # from ..utils.intent_parser import IntentParser # <--- COMMENTED OUT TEMPORARILY
 # from ..llm.gemini_client import GeminiClient # <--- COMMENTED OUT TEMPORARILY
 
