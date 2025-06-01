@@ -17,12 +17,16 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 dotenv_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=dotenv_path)
 
-SQLITE_DB_PATH = str(Path(__file__).parent.parent / "data" / "clinical_trials.db")
+# Path to the root of the Git repository (oncology-backend)
+# Assumes 'scripts/' directory is at the root of the 'oncology-backend' project.
+PROJECT_ROOT_DIR = Path(__file__).resolve().parent.parent 
+
+SQLITE_DB_PATH = str(PROJECT_ROOT_DIR / "backend" / "data" / "clinical_trials.db")
 # CHROMA_DB_PATH = "./chroma_db" # Old relative path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent # oncology-coPilot-main
-CHROMA_DB_PATH = str(PROJECT_ROOT / "backend" / "data" / "chroma_data")
+CHROMA_DB_PATH = str(PROJECT_ROOT_DIR / "backend" / "data" / "chroma_data")
 CHROMA_COLLECTION_NAME = "clinical_trials_eligibility"
-SOURCE_JSON_PATH = str(Path(__file__).parent.parent / "documents.json") # Made absolute
+SOURCE_JSON_PATH = str(PROJECT_ROOT_DIR / "documents.json") # Path relative to project root
 # EMBEDDING_MODEL = 'all-MiniLM-L6-v2' # Removed: Specific to SentenceTransformer
 # VECTOR_DIMENSION = 384 # Removed: Specific to SentenceTransformer
 

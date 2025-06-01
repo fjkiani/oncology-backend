@@ -1032,7 +1032,7 @@ async def search_clinical_trials(request: TrialSearchRequest):
     
     # Prepare context and kwargs for the agent
     # Agent expects patient data under 'patient_data' key in context
-    context = {"patient_data": request.patient_context.dict() if request.patient_context else {}} 
+    context = {"patient_data": request.patient_context.model_dump() if request.patient_context else {}} 
     kwargs = {"prompt": request.query} # Pass query as prompt
     
     try:
