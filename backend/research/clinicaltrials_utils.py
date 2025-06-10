@@ -2,6 +2,7 @@ import requests
 import asyncio
 import logging
 from typing import Dict, Any, List, Optional, Iterator
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -128,6 +129,9 @@ async def fetch_all_trials_generator(
             if max_pages is not None and pages_fetched >= max_pages:
                 logger.info(f"Reached max_pages limit of {max_pages}. Stopping fetch.")
                 break
+
+            # Per project rules, be polite to the API server.
+            time.sleep(0.5)
             
         except requests.exceptions.RequestException as e:
             logger.error(f"API request failed on page {pages_fetched + 1}: {e}")

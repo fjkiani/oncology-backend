@@ -103,9 +103,9 @@ CRISPResso2-master copy/
 CRISPResso2-master/
 
 # Database files
-*.db
-*.sqlite
 *.sqlite3
+*.db
+*.db-journal
 
 # Python
 __pycache__/
