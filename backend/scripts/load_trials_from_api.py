@@ -183,9 +183,22 @@ async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batc
             # Group sentences into chunks of a safe size
             text_chunks = []
             current_chunk = ""
+            safe_limit = 4000 # Keep it well below the 8000 byte limit
+
             for sentence in sentences:
+                # If a single sentence is already too long, split it
+                if len(sentence) > safe_limit:
+                    # If there's a current chunk, save it first
+                    if current_chunk:
+                        text_chunks.append(current_chunk.strip())
+                        current_chunk = ""
+                    # Split the long sentence and add its parts as separate chunks
+                    for i in range(0, len(sentence), safe_limit):
+                        text_chunks.append(sentence[i:i+safe_limit])
+                    continue
+
                 # If adding the next sentence exceeds the safe limit, finalize the current chunk
-                if len(current_chunk) + len(sentence) + 1 > 4000:
+                if len(current_chunk) + len(sentence) + 1 > safe_limit:
                     text_chunks.append(current_chunk.strip())
                     current_chunk = sentence + " "
                 else:

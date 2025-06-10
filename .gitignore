@@ -143,3 +143,9 @@ ENV/
 # Environment variables
 .env
 .env.local
+
+# Log files
+logs/
+
+# VS Code settings
+.vscode/
