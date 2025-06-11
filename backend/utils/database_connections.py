@@ -28,7 +28,7 @@ class DatabaseConnections:
         self.data_dir = self.project_root / "backend" / "data"
         self.chroma_db_path = str(self.data_dir / "chroma_data")
         self.sqlite_db_path = self.data_dir / "clinical_trials.db"
-
+        
         # Initialize connection holders
         self.sqlite_connection: Optional[sqlite3.Connection] = None
         # Placeholder for cloud vector database connection
@@ -95,6 +95,22 @@ class DatabaseConnections:
             logger.error(f"Failed to initialize AstraDB connection: {e}", exc_info=True)
             return None
         
+    def get_vector_db_collection(self, collection_name: str):
+        """
+        Retrieves a specific collection from the active AstraDB,
+        initializing the database connection if necessary.
+        """
+        db = self.get_vector_db_connection()
+        if db:
+            try:
+                collection = db.get_collection(collection_name)
+                logger.info(f"Successfully retrieved collection '{collection_name}'.")
+                return collection
+            except Exception as e:
+                logger.error(f"Failed to get collection '{collection_name}': {e}", exc_info=True)
+                return None
+        return None
+        
     def get_vector_db_connection(self) -> Optional[Database]:
         """
         Retrieves the active AstraDB connection, initializing it if necessary.
@@ -102,7 +118,7 @@ class DatabaseConnections:
         if not self.vector_db_connection:
             return self.init_vector_db()
         return self.vector_db_connection
-
+        
     def close_vector_db_connection(self):
         """
         Closes the AstraDB vector database connection if it's open.
@@ -112,7 +128,7 @@ class DatabaseConnections:
         if self.vector_db_connection:
             logger.info("Closing AstraDB connection.")
             self.vector_db_connection = None
-
+        
     def __enter__(self):
         """Context manager entry."""
         return self

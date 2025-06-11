@@ -19,6 +19,8 @@ from astrapy.constants import VectorMetric
 from astrapy.info import CollectionDefinition
 import torch
 import nltk
+import argparse
+from typing import Optional
 
 # Configure basic logging
 logging.basicConfig(
@@ -123,7 +125,7 @@ def wipe_databases(db_manager: DatabaseConnections):
 # Global model instance
 model = None
 
-async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batch_size=100):
+async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages: Optional[int] = None, batch_size=100):
     """
     Fetches trial data from the API page by page and loads it into the databases.
     This will orchestrate the work of both the Extractor and the Loader.
@@ -148,14 +150,16 @@ async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batc
         logger.info(f"Sentence transformer model initialized on device: {model.device}")
 
     # --- Data Extractor and Loader Integration ---
-    search_criteria = {'query.cond': 'cancer'}
+    # To fetch ALL trials, we leave the search criteria empty.
+    search_criteria = {}
     
     total_trials_processed = 0
     page_num = 0
     sql_batch = []
     vector_batch = []
 
-    async for page_of_trials in fetch_all_trials_generator(search_criteria, page_size=100, max_pages=5):
+    # Use the max_pages argument here
+    async for page_of_trials in fetch_all_trials_generator(search_criteria, page_size=100, max_pages=max_pages):
         logger.info(f"Processing page with {len(page_of_trials)} trials...")
 
         for trial in page_of_trials:
@@ -282,6 +286,10 @@ def _execute_batch_inserts(cursor, sql_batch: list, trials_collection, vector_ba
 
 def main():
     """Main function to orchestrate the ETL pipeline."""
+    parser = argparse.ArgumentParser(description="Clinical Trials ETL Pipeline")
+    parser.add_argument("--limit", type=int, default=None, help="Limit the number of pages to fetch from the API for testing.")
+    args = parser.parse_args()
+
     logger.info("--- Clinical Trials ETL Pipeline Started ---")
     start_time = time.time()
 
@@ -291,8 +299,8 @@ def main():
         wipe_databases(db_manager)
         
         # Step 2: Fetch new data and load it
-        # Since our fetch function is now async, we need to run it in an event loop.
-        asyncio.run(fetch_and_load_data(db_manager))
+        # Pass the limit from command line args to the async function
+        asyncio.run(fetch_and_load_data(db_manager, max_pages=args.limit))
         
     end_time = time.time()
     logger.info(f"--- Clinical Trials ETL Pipeline Finished in {end_time - start_time:.2f} seconds ---")

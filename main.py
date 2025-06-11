@@ -1011,78 +1011,22 @@ class TrialSearchRequest(BaseModel):
 # --- NEW Clinical Trial Search Endpoint --- 
 @app.post("/api/search-trials")
 async def search_clinical_trials(request: TrialSearchRequest):
-    """
-    Endpoint to search for clinical trials using the ClinicalTrialAgent.
-    Receives search query and optional patient context.
-    
-    *** DEVELOPMENT NOTE: Mock data removed. Agent call re-enabled. ***
-    """
-    logging.info(f"Received trial search request. Query: '{request.query}', Patient Context Provided: {request.patient_context is not None}")
-    
-    # --- MOCK DATA (Commented Out) --- 
-    # mock_action_suggestions = [...]
-    # mock_found_trial = {...}
-    # mock_result_data = {...}
-    # return {
-    #     "success": True, 
-    #     "data": mock_result_data 
-    # }
-    # --- END MOCK DATA ---
-
-    # --- Original Agent Call (Re-enabled) ---
-    agent = ClinicalTrialAgent() # Instantiate the agent
-    
-    # Prepare context and kwargs for the agent
-    # Agent expects patient data under 'patient_data' key in context
-    context = {"patient_data": request.patient_context.model_dump() if request.patient_context else {}} 
-    kwargs = {"prompt": request.query} # Pass query as prompt
-    
+    """Uses ClinicalTrialAgent to search for trials based on a query."""
+    logging.info(f"Received trial search request with query: '{request.query}'")
     try:
-        # Run the agent asynchronously
-        result = await agent.run(patient_data=context.get("patient_data"), prompt_details=kwargs)
-        logging.info(f"ClinicalTrialAgent Result Status: {result.get('status')}")
-        
-        # Check agent status and return appropriate response
-        if result.get("status") == "success":
-            agent_output = result.get("output", {})
-            logging.info(f"[/api/search-trials] Agent output received: {json.dumps(agent_output, indent=2)}") # Log the full agent_output
+        agent = ClinicalTrialAgent()
+        # The agent's run method now directly handles the query.
+        results = await agent.run(query=request.query, patient_context=request.patient_context)
 
-            found_trials = agent_output.get("found_trials", []) 
-            logging.info(f"[/api/search-trials] Initial found_trials (from agent_output.get('found_trials')): {len(found_trials)} trials.")
-
-            if "trials_with_assessment" in agent_output and not found_trials:
-                 logging.info(f"[/api/search-trials] 'trials_with_assessment' key found and initial found_trials is empty. Adapting. Count: {len(agent_output['trials_with_assessment'])}")
-                 found_trials = agent_output["trials_with_assessment"]
-            
-            logging.info(f"[/api/search-trials] Final found_trials before returning to frontend: {len(found_trials)} trials.")
-            if len(found_trials) > 0:
-                logging.debug(f"[/api/search-trials] First trial in final list: {json.dumps(found_trials[0], indent=2)}")
-
-
-            return {
-                "success": True, 
-                "data": { "found_trials": found_trials } # Return trials under data.found_trials
-            }
-        elif result.get("status") == "clarification_needed":
-             # For now, treat clarification needed as no results found, 
-             # could enhance later to pass clarification message back
-              return {
-                "success": True, 
-                "data": {"found_trials": []}, 
-                "message": result.get("summary", "Search criteria unclear.")
-            }
-        else: # error or other status
-             logging.error(f"ClinicalTrialAgent run failed: {result.get('summary')}")
-             raise HTTPException(
-                status_code=500, 
-                detail=result.get("summary", "Agent failed to run")
-            )
-             
+        # The agent returns a dictionary with a 'results' key.
+        # We wrap this in the format the frontend expects.
+        return {
+            "success": True,
+            "data": { "found_trials": results.get("results", []) }
+        }
     except Exception as e:
-        logging.error(f"Error running ClinicalTrialAgent or processing request: {e}", exc_info=True)
-        # Return a standard error response
-        raise HTTPException(status_code=500, detail=f"Failed to search trials: {str(e)}")
-    # --- End Original Agent Call ---
+        logging.error(f"Error during trial search in /api/search-trials: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Data Models ---
 class PatientContext(BaseModel):
