@@ -1016,16 +1016,20 @@ async def search_clinical_trials(request: TrialSearchRequest):
     try:
         agent = ClinicalTrialAgent()
         # The agent's run method now directly handles the query.
-        results = await agent.run(query=request.query, patient_context=request.patient_context)
-
-        # The agent returns a dictionary with a 'results' key.
-        # We wrap this in the format the frontend expects.
+        results = await agent.run(
+            query=request.query, 
+            patient_context=request.patient_context.dict() if request.patient_context else None
+        )
+        
+        # The frontend expects a specific wrapper structure.
         return {
             "success": True,
-            "data": { "found_trials": results.get("results", []) }
+            "data": {
+                "found_trials": results.get("results", [])
+            }
         }
     except Exception as e:
-        logging.error(f"Error during trial search in /api/search-trials: {e}", exc_info=True)
+        logging.error(f"Error in /api/search-trials endpoint: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Data Models ---
@@ -1189,9 +1193,26 @@ class DeepDiveRequest(BaseModel):
 
 @app.post("/api/request-deep-dive")
 async def request_deep_dive(request: DeepDiveRequest):
-    """Triggers the EligibilityDeepDiveAgent to analyze specific criteria."""
-    logging.info(f"Received request for deep dive analysis for trial: {request.trial_data.get('nct_id', 'N/A')}")
+    """
+    Receives a request to perform a detailed eligibility analysis for a specific trial
+    using the patient's full context.
+    """
+    # --- Add temporary logging to inspect the incoming request ---
+    logging.info(f"--- INCOMING DEEP DIVE REQUEST ---")
+    try:
+        logging.info(request.model_dump_json(indent=2))
+    except Exception as e:
+        logging.error(f"Could not dump request model to JSON: {e}")
+    logging.info(f"--- END DEEP DIVE REQUEST ---")
+    # --- End temporary logging ---
     
+    trial_id = request.trial_data.get("id", "UNKNOWN_TRIAL")
+    logging.info(f"Received request for deep dive analysis for trial: {trial_id}")
+    
+    # --- ADDING MORE LOGGING ---
+    logging.info(f"TRIAL DATA being passed to agent: {json.dumps(request.trial_data, indent=2)}")
+    # --- END LOGGING ---
+
     try:
         agent = EligibilityDeepDiveAgent()
         
@@ -1203,7 +1224,6 @@ async def request_deep_dive(request: DeepDiveRequest):
         return report
         
     except Exception as e:
-        trial_id = request.trial_data.get('nct_id', 'N/A')
         logging.error(f"Error during deep dive analysis for trial {trial_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, 

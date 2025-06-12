@@ -99,10 +99,20 @@ class ClinicalTrialAgent(AgentInterface):
             logging.error(f"Failed to load sentence transformer model: {e}", exc_info=True)
             self.embedding_model = None
 
-        # LLM client is disabled to avoid quota issues during pure retrieval testing.
-        # Re-enable for full functionality.
-        self.llm_client = None
-        logging.warning("LLM client is currently disabled for testing purposes.")
+        # --- Re-enable the LLM Client ---
+        try:
+            gemini_api_key = os.getenv("GOOGLE_API_KEY")
+            if not gemini_api_key:
+                logging.warning("GOOGLE_API_KEY not found in .env file. LLM features will be disabled.")
+                self.llm_client = None
+            else:
+                logging.info("Configuring Gemini client...")
+                genai.configure(api_key=gemini_api_key)
+                self.llm_client = genai.GenerativeModel('gemini-1.5-flash')
+                logging.info("Gemini client configured successfully.")
+        except Exception as e:
+            logging.error(f"Failed to initialize Gemini client: {e}", exc_info=True)
+            self.llm_client = None
             
         logging.info("ClinicalTrialAgent Initialized.")
 
@@ -203,13 +213,37 @@ class ClinicalTrialAgent(AgentInterface):
         try:
             cursor = conn.cursor()
             placeholders = ','.join('?' for _ in nct_ids)
-            query = f"SELECT * FROM trials WHERE nct_id IN ({placeholders})"
+            query = f"SELECT * FROM trials WHERE id IN ({placeholders})"
             cursor.execute(query, nct_ids)
             
             columns = [description[0] for description in cursor.description]
             results = [dict(zip(columns, row)) for row in cursor.fetchall()]
             
-            results_dict = {row['nct_id']: row for row in results}
+            # The frontend expects specific key names. Let's transform the data.
+            transformed_results = []
+            for row in results:
+                # The 'phases' from DB is a JSON string like '["Phase 2"]'. Let's parse it.
+                phases_list = json.loads(row.get("phases", "[]"))
+                phase_str = ", ".join(phases_list) if phases_list else "N/A"
+
+                transformed_row = {
+                    "id": row.get("id"),  # Use "id" as the key for NCT ID
+                    "nctId": row.get("id"), # Keep nctId for good measure
+                    "trial_id": row.get("id"), # Add trial_id as another possibility
+                    "title": row.get("title"),
+                    "status": row.get("status"),
+                    "phase": phase_str, # Send a clean string
+                    "summary": row.get("summary"),
+                    "conditions": row.get("conditions"),
+                    "interventions": row.get("interventions"),
+                    "source": row.get("source"),
+                    "inclusion_criteria": row.get("inclusion_criteria"),
+                    "exclusion_criteria": row.get("exclusion_criteria"),
+                    "eligibility": {"status": "Not Assessed"} # Add placeholder for initial view
+                }
+                transformed_results.append(transformed_row)
+
+            results_dict = {row['id']: row for row in transformed_results}
             ordered_results = [results_dict[nct_id] for nct_id in nct_ids if nct_id in results_dict]
             
             return ordered_results
@@ -364,18 +398,27 @@ class ClinicalTrialAgent(AgentInterface):
 
         try:
             # 1. Create embedding for the user's query
-            query_embedding = self.embedding_model.encode(query).tolist()
+            query_embedding = self.embedding_model.encode(query).tolist()  # Convert to list once
 
             # 2. Perform vector search in AstraDB
             logging.info(f"Performing vector search with {N_VECTOR_SEARCH_RESULTS} results.")
-            similar_trials = self.trials_collection.vector_find(
-                vector=query_embedding,
-                limit=N_VECTOR_SEARCH_RESULTS,
-                fields={"nct_id", "title"} # Only fetch necessary fields
+            if len(query_embedding) != 384:  # Check dimension
+                logging.error(f"Query embedding dimension {len(query_embedding)} does not match AstraDB dimension 384")
+                return {"status": "error", "message": "Vector dimension mismatch"}
+                
+            similar_trials_cursor = self.trials_collection.find(
+                sort={"$vector": query_embedding},
+                limit=N_VECTOR_SEARCH_RESULTS
             )
+            
+            # Get the data from the cursor using regular for loop
+            similar_trials = []
+            for doc in similar_trials_cursor:
+                similar_trials.append(doc)
             logging.info(f"Found {len(similar_trials)} trials from vector search.")
 
-            nct_ids = [trial['nct_id'] for trial in similar_trials]
+            # Extract unique trial IDs (a trial might have multiple chunks)
+            nct_ids = list(set(trial['nct_id'] for trial in similar_trials))
 
             # 3. Fetch full trial details from SQLite
             trial_details = self._fetch_trial_details(nct_ids)
