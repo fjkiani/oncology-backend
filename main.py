@@ -1005,27 +1005,29 @@ async def read_root():
 # --- Add Request Model ---
 class TrialSearchRequest(BaseModel):
     query: str = Field(..., description="The search query text entered by the user.")
-    # Use the more specific PatientContext model defined later
     patient_context: Optional['PatientContext'] = Field(default=None, description="Optional patient context data.")
+    page_state: Optional[str] = Field(default=None, description="The page state token for pagination.")
 
 # --- NEW Clinical Trial Search Endpoint --- 
 @app.post("/api/search-trials")
 async def search_clinical_trials(request: TrialSearchRequest):
     """Uses ClinicalTrialAgent to search for trials based on a query."""
-    logging.info(f"Received trial search request with query: '{request.query}'")
+    logging.info(f"Received trial search request with query: '{request.query}' and page_state: '{request.page_state}'")
     try:
         agent = ClinicalTrialAgent()
-        # The agent's run method now directly handles the query.
+        # The agent's run method now directly handles the query and pagination.
         results = await agent.run(
             query=request.query, 
-            patient_context=request.patient_context.dict() if request.patient_context else None
+            patient_context=request.patient_context.dict() if request.patient_context else None,
+            page_state=request.page_state
         )
         
-        # The frontend expects a specific wrapper structure.
+        # The frontend expects a specific wrapper structure, now including pagination state.
         return {
             "success": True,
             "data": {
-                "found_trials": results.get("results", [])
+                "found_trials": results.get("results", []),
+                "next_page_state": results.get("next_page_state")
             }
         }
     except Exception as e:
@@ -1045,6 +1047,7 @@ class PatientContext(BaseModel):
 class TrialSearchRequest(BaseModel):
     query: str
     patient_context: Optional[PatientContext] = None # Use the refined model
+    page_state: Optional[str] = None
 
 class ConsultationRequest(BaseModel):
     room_id: str

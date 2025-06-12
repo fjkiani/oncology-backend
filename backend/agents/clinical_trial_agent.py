@@ -31,7 +31,7 @@ load_dotenv(dotenv_path=dotenv_path)
 
 APP_ROOT_IN_CONTAINER = Path(__file__).resolve().parent.parent.parent
 EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
-N_VECTOR_SEARCH_RESULTS = 10  # Number of results to fetch from vector search
+N_VECTOR_SEARCH_RESULTS = 500  # Number of results to fetch from vector search
 ELIGIBILITY_AND_NARRATIVE_SUMMARY_PROMPT_TEMPLATE = """
 You are a clinical trial expert. Your task is to analyze a patient's medical information against a clinical trial's eligibility criteria and provide a structured summary.
 
@@ -76,6 +76,10 @@ If none, write `None`.
 List criteria where eligibility is uncertain due to missing patient information. For each, provide the snippet from the trial criteria and state what information is needed. Format as: `* [Criterion Text] - TRIAL_SNIPPET: "[Snippet]" - Reasoning: [Information Needed]`
 If none, write `None`.
 """
+
+# --- Constants ---
+# The threshold for Jaccard similarity to consider a patient's criteria "met".
+JACCARD_SIMILARITY_THRESHOLD = 0.5
 
 class ClinicalTrialAgent(AgentInterface):
     """
@@ -134,35 +138,42 @@ class ClinicalTrialAgent(AgentInterface):
     
     def _build_query_text(self, patient_data: Dict[str, Any], entities: Dict[str, Any], prompt: str) -> str:
         """
-        Constructs a detailed query string for vector search.
+        Constructs a detailed, human-readable query string for vector search
+        to improve the quality of embeddings.
         """
-        parts = []
+        description_parts = []
         
+        # Start with a clear statement of intent
+        base_sentence = "Clinical trials for a patient with"
+        
+        # Add diagnosis and stage
         if 'diagnosis' in patient_data:
             diag = patient_data['diagnosis']
-            if 'primary' in diag:
-                parts.append(f"Condition: {diag['primary']}")
-            if 'stage' in diag:
-                parts.append(f"Stage: {diag['stage']}")
+            condition = diag.get('primary', '')
+            stage = diag.get('stage', '')
+            if stage:
+                base_sentence += f" {stage}"
+            if condition:
+                base_sentence += f" {condition}"
         
-        if 'biomarkers' in patient_data and patient_data['biomarkers']:
-            parts.append(f"Biomarkers: {', '.join(patient_data['biomarkers'])}")
+        description_parts.append(base_sentence + ".")
 
+        # Add biomarkers
+        if 'biomarkers' in patient_data and patient_data['biomarkers']:
+            biomarker_str = ', '.join(patient_data['biomarkers'])
+            description_parts.append(f"The patient has the following biomarkers: {biomarker_str}.")
+
+        # Add prior treatments
         if 'prior_treatments' in patient_data and patient_data['prior_treatments']:
             treatments = [t.get('name', '') for t in patient_data['prior_treatments']]
-            parts.append(f"Prior Treatments: {', '.join(filter(None, treatments))}")
+            treatment_str = ', '.join(filter(None, treatments))
+            description_parts.append(f"They have received prior treatments including: {treatment_str}.")
             
-        if 'condition' in entities:
-            parts.append(f"Condition: {entities['condition']}")
-        if 'trial_phase' in entities:
-            parts.append(f"Phase: {entities['trial_phase']}")
-        if 'location' in entities:
-             parts.append(f"Location: {entities['location']}")
-
+        # Add the specific user query/prompt last for focus
         if prompt:
-            parts.append(prompt)
+            description_parts.append(f"The search is focused on trials involving {prompt}.")
             
-        return ". ".join(parts)
+        return " ".join(description_parts)
 
     async def _get_llm_assessment_for_trial(self, patient_context: Dict[str, Any], trial_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -387,50 +398,72 @@ class ClinicalTrialAgent(AgentInterface):
         )
         return trial_data_with_assessment
 
-    async def run(self, query: str, patient_context: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    async def run(self, query: str, patient_context: Optional[Dict[str, Any]] = None, page_state: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """
-        Finds relevant clinical trials based on a search query.
+        Finds relevant clinical trials based on a search query, supporting pagination.
         """
-        logging.info(f"Running trial search for query: '{query}'")
+        logging.info(f"Running trial search for query: '{query}' with page_state: '{page_state}'")
         if not self.embedding_model:
             logging.error("Embedding model is not available. Cannot perform vector search.")
             return {"status": "error", "message": "Embedding model not loaded."}
 
         try:
-            # 1. Create embedding for the user's query
-            query_embedding = self.embedding_model.encode(query).tolist()  # Convert to list once
+            # 1. Build a rich query by combining the user's prompt and patient context
+            if patient_context:
+                # The _build_query_text method is not async, so we call it directly.
+                # We pass an empty dict for `entities` as we are not doing separate entity extraction here.
+                rich_query_text = self._build_query_text(
+                    patient_data=patient_context, 
+                    entities={}, 
+                    prompt=query
+                )
+            else:
+                rich_query_text = query
 
-            # 2. Perform vector search in AstraDB
-            logging.info(f"Performing vector search with {N_VECTOR_SEARCH_RESULTS} results.")
-            if len(query_embedding) != 384:  # Check dimension
+            # 2. Create embedding for the rich query text
+            logging.info(f"Generating embedding for rich query: '{rich_query_text}'")
+            query_embedding = self.embedding_model.encode(rich_query_text).tolist()
+            logging.info(f"Generated vector starts with: {query_embedding[:5]}")
+
+            # 3. Perform vector search in AstraDB
+            logging.info(f"Performing vector search with limit: {N_VECTOR_SEARCH_RESULTS}.")
+            if len(query_embedding) != 384:
                 logging.error(f"Query embedding dimension {len(query_embedding)} does not match AstraDB dimension 384")
                 return {"status": "error", "message": "Vector dimension mismatch"}
-                
-            similar_trials_cursor = self.trials_collection.find(
-                sort={"$vector": query_embedding},
-                limit=N_VECTOR_SEARCH_RESULTS
-            )
             
-            # Get the data from the cursor using regular for loop
-            similar_trials = []
-            for doc in similar_trials_cursor:
-                similar_trials.append(doc)
-            logging.info(f"Found {len(similar_trials)} trials from vector search.")
+            # Prepare find parameters
+            find_params = {
+                "filter": {},  # Add empty filter to enable pagination
+                "sort": {"$vector": query_embedding},
+                "limit": N_VECTOR_SEARCH_RESULTS,
+                "include_similarity": True
+            }
+            if page_state:
+                find_params["page_state"] = page_state
+                
+            # Correctly call find with keyword arguments
+            similar_trials_cursor = self.trials_collection.find(**find_params)
+            
+            # Correctly iterate to get data and populate the cursor for metadata
+            similar_trials = list(similar_trials_cursor)
+            
+            # Correctly get the next_page_state after iteration
+            next_page_state = similar_trials_cursor._next_page_state
+            
+            logging.info(f"Found {len(similar_trials)} trials from vector search. Next page state: {next_page_state}")
 
-            # Extract unique trial IDs (a trial might have multiple chunks)
+            # Extract unique trial IDs
             nct_ids = list(set(trial['nct_id'] for trial in similar_trials))
 
-            # 3. Fetch full trial details from SQLite
+            # 4. Fetch full trial details from SQLite
             trial_details = self._fetch_trial_details(nct_ids)
             logging.info(f"Fetched details for {len(trial_details)} trials from SQLite.")
-            
-            # (Optional) Future step: If patient_context is provided,
-            # run LLM assessment for each trial here. For now, we just return the trials.
 
             return {
                 "status": "success",
                 "message": f"Found {len(trial_details)} trials.",
-                "results": trial_details
+                "results": trial_details,
+                "next_page_state": next_page_state
             }
 
         except Exception as e:

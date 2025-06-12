@@ -366,7 +366,7 @@ class EligibilityDeepDiveAgent(AgentInterface):
              analyzed_results = await self._run_batch_analysis(
                 criteria_list=all_criteria_to_analyze,
                 patient_data_snippet=patient_data_snippet,
-                trial_id=trial_id
+                    trial_id=trial_id
              )
         # --- END BATCHED LLM ANALYSIS ---
 
@@ -493,9 +493,9 @@ class EligibilityDeepDiveAgent(AgentInterface):
 
         # --- Generate Summary (Can be enhanced later) ---
         if is_full_dive:
-             summary_text = f"Full deep dive completed for {len(analyzed_results)} criteria. "
+            summary_text = f"Full deep dive completed for {len(analyzed_results)} criteria. "
         else:
-             summary_text = f"Deep dive completed for {len(analyzed_results)} criteria. "
+            summary_text = f"Deep dive completed for {len(analyzed_results)} criteria. "
         summary_text += f"{len(clarified_items)} criteria were potentially clarified as MET. "
         summary_text += f"{len(remaining_gaps)} criteria remain as NOT_MET, UNCLEAR, or encountered errors."
         # --- End Summary --- 
@@ -574,7 +574,7 @@ class EligibilityDeepDiveAgent(AgentInterface):
                         raw_next_steps_text = next_steps_response.parts[0].text
                     elif hasattr(next_steps_response, 'text'):
                         raw_next_steps_text = next_steps_response.text # Fallback for simpler text responses
-                    else:
+                    else: 
                         logging.warning(f"[{self.name}:{trial_id}] Next steps LLM Response structure unexpected or no text content found. Blocked? Resp: {next_steps_response}")
                         raw_next_steps_text = "Error: LLM response structure invalid or missing text."
                 except AttributeError:
@@ -645,7 +645,6 @@ class EligibilityDeepDiveAgent(AgentInterface):
             "strategic_next_steps": strategic_next_steps,
             "internal_search_results": internal_search_findings # Add search results to final report
         } 
-
     # --- Internal Search Helper Methods (Task 5.1.2) ---
     def _search_lab_component(self, labs_data: List[Dict[str, Any]], lab_keywords: List[str]) -> List[Dict[str, Any]]:
         """Searches lab data for specific components."""
@@ -686,7 +685,7 @@ class EligibilityDeepDiveAgent(AgentInterface):
         # Using simple checks for now.
         keywords_lower = [k.lower() for k in keywords if isinstance(k, str)] # Basic keywords
         regex_patterns = [re.compile(p, re.IGNORECASE) for p in keywords if not isinstance(p, str)] # If patterns are included
-        
+
         for note in notes_data:
             if not isinstance(note, dict): continue
             note_text = note.get('text', '')
