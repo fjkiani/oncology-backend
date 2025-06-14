@@ -107,6 +107,7 @@ async def get_all_tasks():
 # Configure CORS
 origins = [
     "http://localhost:5173",  # Assuming default Vite dev server port
+    "http://localhost:5174",  # Add the new origin for the frontend
     "http://localhost:3000",  # Common React dev server port
     # Add any other origins if necessary (e.g., deployed frontend URL)
 ]
