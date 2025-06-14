@@ -155,6 +155,41 @@ class EligibilityDeepDiveAgent(AgentInterface):
         return "Performs a detailed review of specific eligibility criteria against patient data using an LLM."
     # --- End Properties --- 
     
+    def _parse_criteria_from_trial_data(self, trial_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Parses inclusion/exclusion criteria strings from trial_data into a structured list."""
+        parsed_criteria = []
+        
+        # --- Handle Inclusion Criteria ---
+        inclusion_text = trial_data.get("inclusion_criteria", "")
+        if inclusion_text and isinstance(inclusion_text, str):
+            # Split by newline and filter out empty lines or simple headers
+            items = [item.strip() for item in inclusion_text.split('\n') if item.strip()]
+            for item in items:
+                # Remove leading bullets/asterisks for cleaner text
+                clean_item = re.sub(r"^\s*[\*\-•]\s*", "", item)
+                if clean_item and len(clean_item) > 10: # Basic filter for meaningful criteria
+                    parsed_criteria.append({
+                        "criterion": clean_item,
+                        "type": "inclusion",
+                        "reasoning": "N/A - Full Deep Dive" # Add context
+                    })
+
+        # --- Handle Exclusion Criteria ---
+        exclusion_text = trial_data.get("exclusion_criteria", "")
+        if exclusion_text and isinstance(exclusion_text, str):
+            items = [item.strip() for item in exclusion_text.split('\n') if item.strip()]
+            for item in items:
+                clean_item = re.sub(r"^\s*[\*\-•]\s*", "", item)
+                if clean_item and len(clean_item) > 10:
+                    parsed_criteria.append({
+                        "criterion": clean_item,
+                        "type": "exclusion",
+                        "reasoning": "N/A - Full Deep Dive"
+                    })
+        
+        logging.info(f"[{self.name}] Parsed {len(parsed_criteria)} criteria for full deep dive from trial_data.")
+        return parsed_criteria
+
     def __init__(self):
         # Call super().__init__() - No need to set name/desc here now
         super().__init__() 
@@ -177,215 +212,105 @@ class EligibilityDeepDiveAgent(AgentInterface):
              # Use self.name (the property) in logging
             logging.error(f"[{self.name}] GOOGLE_API_KEY environment variable not set. LLM features will be disabled.")
 
-    async def _analyze_single_criterion_async(self, criterion_text: str, original_reasoning: str, trial_document_snippet: Optional[str], patient_data: Dict[str, Any], trial_id: str) -> Dict[str, Any]:
-        """Analyzes a single criterion asynchronously, using original reasoning context and including the trial document snippet."""
-        result = {
-            "criterion": criterion_text,
-            "status": "UNCLEAR",
-            "evidence": "",
-            "analysis_source": "Standard LLM", # Default source
-            "trial_document_snippet": trial_document_snippet # Add the snippet here
-        }
+    async def _run_batch_analysis(self, criteria_list: List[Dict[str, Any]], patient_data_snippet: Dict[str, Any], trial_id: str) -> List[Dict[str, Any]]:
+        """
+        Constructs a prompt, runs a single batch LLM call, and parses the response.
+        """
+        # 1. Construct the prompt
+        formatted_criteria = ""
+        for i, criterion_obj in enumerate(criteria_list):
+            formatted_criteria += f"{i+1}. {criterion_obj['criterion']}\n"
 
-        # --- Refined Genomic Criterion Detection ---
-        is_genomic_criterion = False
-        # Keywords indicating a request for genomic status/test results
-        genomic_status_keywords = [
-            "mutation", "mutations", "variant", "variants", "alteration", "alterations",
-            "status", "expression", "amplification", "deletion", "fusion", 
-            "positive", "negative", "wild-type", "wild type", "wt", 
-            "detected", "profile", "profiling", "sequencing", "assay", "test"
-        ]
-        # Gene/Biomarker names
-        gene_keywords = [
-            "gene", "genes", "genomic", "genetic", "dna", "rna", "biomarker",
-            "pik3ca", "kras", "tp53", "brca", "akt", "egfr", "braf", "her2"
-            # Add more specific gene names if needed
-        ]
-        
-        criterion_lower = criterion_text.lower()
-        contains_gene_keyword = any(gkw.lower() in criterion_lower for gkw in gene_keywords)
-        contains_status_keyword = any(skw.lower() in criterion_lower for skw in genomic_status_keywords)
+        prompt = (
+            "You are an expert clinical research assistant performing a deep dive analysis on a list of eligibility criteria for a clinical trial. "
+            f"Your task is to determine if a patient meets each criterion based *only* on the provided patient data snippet.\n\n"
+            "## CONTEXT\n"
+            f"**Trial ID:** {trial_id}\n\n"
+            f"## PATIENT DATA\n"
+            "Review the following patient data carefully. This is the ONLY information you have.\n"
+            f"```json\n{json.dumps(patient_data_snippet, indent=2, default=str)}\n```\n\n"
+            "## CRITERIA TO ANALYZE\n"
+            "Analyze each of the following criteria from the provided list:\n"
+            f"```\n{formatted_criteria}\n```\n\n"
+            "## YOUR TASK\n"
+            "1.  **Go through each criterion one by one.**\n"
+            "2.  **Make a definitive decision for each:** Does the patient meet the criterion, not meet it, or is it impossible to determine from the given data?\n"
+            "3.  **Provide direct evidence:** Quote or reference the specific lab value, mutation, note, or medication from the patient data that justifies your decision. If no data is available, state that explicitly.\n"
+            "4.  **Format your response as a single JSON array.** Each object in the array must correspond to a criterion from the list and have three keys: `criterion`, `status`, and `evidence`.\n\n"
+            "   -   `\"criterion\"`: The full, original text of the criterion you are analyzing.\n"
+            "   -   `\"status\"`: Must be one of three exact string values: `MET`, `NOT_MET`, or `UNCLEAR`.\n"
+            "   -   `\"evidence\"`: A string explaining your reasoning, citing specific data points from the patient record.\n\n"
+            "**Analysis Output (JSON Array):**\n"
+        )
 
-        # Require BOTH a gene-related term AND a status/test-related term
-        if contains_gene_keyword and contains_status_keyword:
-            # Added exclusion check
-            exclusion_keywords = ["inhibitor", "prior", "history of"]
-            if not any(ex_kw in criterion_lower for ex_kw in exclusion_keywords):
-                is_genomic_criterion = True
-                result["analysis_source"] = "GenomicAnalystAgent (Attempt)"
-                logging.info(f"[{self.name}:{trial_id}] Detected potential genomic criterion (refined): {criterion_text[:80]}...")
-            else:
-                logging.debug(f"[{self.name}:{trial_id}] Criterion contains gene but also exclusion keywords; treating as non-genomic: {criterion_text[:80]}...")
-        # --- End Refined Detection ---
-
-        # If it's a genomic criterion and we have genomic data, delegate to GenomicAnalystAgent
-        if is_genomic_criterion:
-            # 'patient_data' here is actually patient_data_snippet from the run method
-            patient_mutations_list = patient_data.get('mutations') # Use 'mutations' key from snippet
-            patient_id_for_agent = patient_data.get('patientId') # Use 'patientId' key from snippet
-
-            if patient_mutations_list is not None: # Check if mutations list exists (can be empty)
-                logging.debug(f"[EligibilityDeepDiveAgent:{trial_id}] Delegating to GenomicAnalystAgent for patient {patient_id_for_agent}...")
-                try:
-                    # Check if GenomicAnalystAgent is available (import might have failed)
-                    try:
-                        from .genomic_analyst_agent import GenomicAnalystAgent, GenomicAnalysisResult 
-                    except ImportError:
-                         logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] GenomicAnalystAgent class not found. Cannot perform genomic analysis.")
-                         result.update({
-                             "status": "ERROR", 
-                             "evidence": "Genomic analysis required, but the GenomicAnalystAgent is not available.",
-                             "analysis_source": "System Error"
-                         })
-                         return result
-
-                    genomic_agent = GenomicAnalystAgent()
-                    # Corrected call to GenomicAnalystAgent.run
-                    genomic_run_result = await genomic_agent.run(
-                        genomic_query=criterion_text,
-                        patient_id=patient_id_for_agent if patient_id_for_agent else "UNKNOWN_PATIENT", # Provide patient_id
-                        patient_mutations=patient_mutations_list # Provide the mutations list
-                    )
-                    
-                    # Ensure genomic_run_result is a dictionary for consistent access
-                    if isinstance(genomic_run_result, GenomicAnalysisResult):
-                        genomic_result_dict = genomic_run_result.model_dump() if hasattr(genomic_run_result, 'model_dump') else vars(genomic_run_result)
-                    elif isinstance(genomic_run_result, dict):
-                        genomic_result_dict = genomic_run_result
-                    else:
-                        logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] Unexpected result type from GenomicAnalystAgent: {type(genomic_run_result)}")
-                        genomic_result_dict = {"status": "ERROR", "evidence": "Invalid result from genomic agent."}
-                    
-                    result.update({
-                        "status": genomic_result_dict.get("status", "UNCLEAR"),
-                        "evidence": genomic_result_dict.get("evidence", "No evidence provided by GenomicAnalystAgent"),
-                        "analysis_source": "GenomicAnalystAgent" # Update source on success
-                    })
-                    logging.info(f"[EligibilityDeepDiveAgent:{trial_id}] Genomic analysis via GenomicAnalystAgent complete. Status: {genomic_result_dict.get('status')}")
-                    return result 
-                except Exception as e:
-                    logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] Error during GenomicAnalystAgent execution: {str(e)}", exc_info=True)
-                    result.update({
-                        "status": "ERROR",
-                        "evidence": f"Error during genomic analysis delegation: {str(e)}",
-                        "analysis_source": "System Error"
-                    })
-                    return result
-            else:
-                # Genomic criterion detected, but no genomic data provided for the patient
-                logging.warning(f"[EligibilityDeepDiveAgent:{trial_id}] Genomic criterion detected, but no patient genomic data found.")
-                result.update({
-                    "status": "UNCLEAR",
-                    "evidence": "Genomic analysis required by criterion, but no genomic data was provided for this patient.",
-                    "analysis_source": "Missing Data"
-                })
-                return result
-
-        # --- If NOT a genomic criterion (or delegation failed above), use standard LLM ---
-        # This block now only runs for non-genomic criteria
-        logging.debug(f"[EligibilityDeepDiveAgent:{trial_id}] Performing standard LLM text analysis for criterion: {criterion_text[:80]}...")
-        result["analysis_source"] = "Standard LLM" # Ensure source is correct
+        # 2. Make the single API call
         try:
-            # Prepare the prompt for the LLM
-            prompt = f"""
-            Analyze this clinical trial eligibility criterion based ONLY on the provided patient data snippet.
-            
-            Criterion: {criterion_text}
-            
-            Initial Assessment Reasoning provided previously: "{original_reasoning}"
-            
-            Patient Data Snippet (JSON):
-            ```json
-            {json.dumps(patient_data, indent=2, default=str)} 
-            ```
-            
-            Task: Re-evaluate the criterion based ONLY on the Patient Data Snippet provided.
-            Critically address the Initial Assessment Reasoning: Does the snippet confirm it, refute it, or is the snippet still insufficient to address that specific point?
-            
-            Respond with ONLY the following structure:
-            STATUS: [MET | NOT_MET | UNCLEAR]
-            REASONING: [Your brief 1-2 sentence reasoning, EXPLICITLY referencing the Initial Assessment Reasoning and how the Patient Data Snippet confirms/refutes/is still insufficient for it.]
-            
-            Example 1 (Data Confirms Initial Gap Resolved):
-            STATUS: MET
-            REASONING: Initial reasoning stated 'No lab data provided'. The snippet includes recent labs showing Platelets = 250 K/uL, which meets the >= 150 K/uL requirement.
-            
-            Example 2 (Data Still Insufficient):
-            STATUS: UNCLEAR
-            REASONING: Initial reasoning stated 'ECOG status is missing'. The provided Patient Data Snippet still does not contain ECOG performance status.
-            
-            Example 3 (Data Refutes Initial Gap - Finds Contraindication):
-            STATUS: NOT_MET
-            REASONING: Initial reasoning stated 'Allergy info missing'. The snippet shows an allergy to Penicillin, which is listed as an exclusion.
-            """
-
-            # --- FIX: Use generate_content_async ---
-            if not self.llm_client:
-                 raise ValueError("LLM Client not initialized")
-                 
+            logging.info(f"[{self.name}:{trial_id}] Sending single batch request to LLM for {len(criteria_list)} criteria.")
             response = await self.llm_client.generate_content_async(
                 prompt,
                 generation_config=DEFAULT_LLM_GENERATION_CONFIG,
                 safety_settings=SAFETY_SETTINGS
             )
-            # --- End FIX ---
-            
-            # --- Extract Text Safely (reuse logic from previous versions if needed) --- 
-            response_text = ""
-            try:
-                # Standard way to get text from Gemini response
-                if response.parts:
-                    response_text = response.parts[0].text
-                elif hasattr(response, 'text'):
-                     response_text = response.text # Fallback for simpler text responses
-                else:
-                    logging.warning(f"[EligibilityDeepDiveAgent:{trial_id}] LLM Response structure unexpected or no text content found for criterion: {criterion_text[:80]}. Blocked? Resp: {response}")
-                    response_text = "Error: LLM response structure invalid or missing text."
-            except AttributeError:
-                 logging.warning(f"[EligibilityDeepDiveAgent:{trial_id}] LLM Response object missing .text/.parts attribute for criterion: {criterion_text[:80]}. Blocked? Resp: {response}")
-                 response_text = "Error: LLM response blocked or attribute missing."
-            except Exception as text_ex:
-                 logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] Error extracting text from LLM response: {text_ex}", exc_info=True)
-                 response_text = f"Error extracting text: {text_ex}"
-            # --- End Text Extraction ---
-
-            logging.debug(f"[{self.name}:{trial_id}] Raw LLM response for standard criterion: {response_text[:150]}...")
-
-            # --- Parse the STATUS/REASONING response ---
-            status_match = re.search(r"STATUS:\s*(MET|NOT_MET|UNCLEAR)", response_text, re.IGNORECASE)
-            reasoning_match = re.search(r"REASONING:\s*(.*)", response_text, re.IGNORECASE | re.DOTALL)
-            
-            if status_match and reasoning_match:
-                result["status"] = status_match.group(1).upper()
-                result["evidence"] = reasoning_match.group(1).strip()
-                logging.debug(f"[{self.name}:{trial_id}] Parsed LLM Analysis: Status={result['status']}, Evidence={result['evidence'][:100]}...")
-            else:
-                logging.warning(f"[{self.name}:{trial_id}] Could not parse STATUS/REASONING from LLM response for criterion: {criterion_text[:80]}. Raw Resp: {response_text}")
-                result["status"] = "ERROR_PARSING_FAILED"
-                result["evidence"] = f"Could not parse response. Raw: {response_text}"
-                
-            return result # Return result from standard LLM analysis
-
+            response_text = response.text
         except Exception as e:
-            logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] Error during standard LLM analysis for criterion '{criterion_text[:80]}...': {str(e)}", exc_info=True)
-            result["status"] = "ERROR_ANALYSIS_FAILED"
-            result["evidence"] = f"Error during standard LLM analysis: {str(e)}"
-            result["analysis_source"] = "System Error"
-            return result
-        
-        # This part should ideally not be reached if logic above is correct
-        # logging.error(f"[EligibilityDeepDiveAgent:{trial_id}] Reached unexpected end of _analyze_single_criterion_async for: {criterion}")
-        # result["status"] = "ERROR_UNEXPECTED_FLOW"
-        # result["evidence"] = "Analysis flow reached an unexpected state."
-        # return result
+            logging.error(f"[{self.name}:{trial_id}] Batched LLM call failed: {e}", exc_info=True)
+            # Return an error object for each criterion
+            return [
+                {"criterion": c.get("criterion"), "status": "ERROR_ANALYSIS_FAILED", "evidence": f"LLM call failed: {e}", "analysis_source": "System Error"}
+                for c in criteria_list
+            ]
 
+        # 3. Parse the response
+        try:
+            match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if not match:
+                raise json.JSONDecodeError("No JSON array found in response.", response_text, 0)
+            
+            json_str = match.group(0)
+            parsed_results = json.loads(json_str)
+
+            if not isinstance(parsed_results, list):
+                raise TypeError("LLM response was not a list.")
+
+            # Map results back to original criteria to ensure order and completeness
+            final_results = []
+            result_map = {res.get("criterion"): res for res in parsed_results}
+            
+            for original_criterion in criteria_list:
+                oc_text = original_criterion["criterion"]
+                # Find the result from the LLM, case-insensitive and ignoring whitespace
+                found_res = None
+                for llm_criterion_text, llm_result in result_map.items():
+                    if llm_criterion_text and oc_text.strip().lower() == llm_criterion_text.strip().lower():
+                        found_res = llm_result
+                        break
+                
+                if found_res:
+                    final_results.append(found_res)
+                else:
+                    # LLM didn't return a result for this specific criterion
+                    final_results.append({
+                        "criterion": oc_text,
+                        "status": "ERROR_MISSING_FROM_LLM_RESPONSE",
+                        "evidence": "The LLM did not provide an analysis for this specific criterion in its batched response."
+                    })
+            
+            return final_results
+
+        except (json.JSONDecodeError, TypeError) as e:
+            logging.error(f"Failed to decode or validate JSON array from LLM response: {e}", exc_info=True)
+            return [
+                {"criterion": c.get("criterion"), "status": "ERROR_PARSING_FAILED", "evidence": f"Failed to parse batched LLM response: {e}. Raw response: {response_text[:200]}...", "analysis_source": "System Error"}
+                for c in criteria_list
+            ]
+
+    # --- MAIN AGENT EXECUTION METHOD ---
     async def run(self, unmet_criteria: List[Dict[str, Any]], unclear_criteria: List[Dict[str, Any]], patient_data: Dict[str, Any], trial_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """
         Analyzes a list of unmet and unclear criteria against patient data.
         Enhances the analysis by considering any original reasoning provided.
         """
-        trial_id = trial_data.get("nct_id", "UNKNOWN_TRIAL") # Get trial_id for logging
+        trial_id = trial_data.get("id", "UNKNOWN_TRIAL") # Get trial_id for logging
         logging.info(f"[{self.name}:{trial_id}] Starting deep dive. Unmet: {len(unmet_criteria)}, Unclear: {len(unclear_criteria)} criteria.")
 
         if not self.llm_client:
@@ -401,24 +326,29 @@ class EligibilityDeepDiveAgent(AgentInterface):
             }
 
         # --- Prepare Patient Data Snippet (Same as before) ---
-        # This snippet is passed to the LLM for each criterion.
-        # For now, it includes key sections. Could be made more dynamic.
         patient_data_snippet = {
-            "patientId": patient_data.get("patientId"),
+            "patientId": patient_data.get("id"),
             "diagnosis": patient_data.get("diagnosis"),
-            "medicalHistory": patient_data.get("medicalHistory", [])[:5], # Limit for brevity
+            "treatments": patient_data.get("treatments", [])[:5], # Limit for brevity
             "currentMedications": patient_data.get("currentMedications", [])[:5],
-            "allergies": patient_data.get("allergies", []), # ADDED allergies
-            "recentLabs": patient_data.get("recentLabs", [])[:3], # Limit recent labs
-            "notes": [note.get("text") for note in patient_data.get("notes", [])[:2]], # Only text of first 2 notes
-            # NEW: Include mutations if available
+            "labs": patient_data.get("labs", [])[:3], # Limit recent labs
+            "notes": [note for note in patient_data.get("notes", [])[:2]], # Only text of first 2 notes
             "mutations": patient_data.get("mutations", []) # Include all mutations for this patient
         }
-        # Remove empty sections from the snippet to keep the prompt clean
         patient_data_snippet = {k: v for k, v in patient_data_snippet.items() if v}
         # --- End Snippet Prep ---
 
         all_criteria_to_analyze = unmet_criteria + unclear_criteria
+        is_full_dive = False
+
+        # --- NEW: Full Deep Dive Fallback Logic ---
+        if not all_criteria_to_analyze:
+            logging.info(f"[{self.name}:{trial_id}] No specific criteria provided. Attempting a full deep dive from trial data.")
+            all_criteria_to_analyze = self._parse_criteria_from_trial_data(trial_data)
+            is_full_dive = True
+            if not all_criteria_to_analyze:
+                 logging.warning(f"[{self.name}:{trial_id}] Could not parse any criteria from trial_data for a full deep dive.")
+        
         analyzed_results = []
 
         if not all_criteria_to_analyze:
@@ -431,43 +361,14 @@ class EligibilityDeepDiveAgent(AgentInterface):
                 "strategic_next_steps": []
             }
 
-        # --- Create tasks for concurrent execution (Same as before) ---
-        tasks = []
-        for item_obj in all_criteria_to_analyze:
-            criterion_text = item_obj.get("criterion")
-            # Default to "No original reasoning provided." if the key is missing or value is None/empty
-            original_reasoning_text = item_obj.get("reasoning") or "No original reasoning provided."
-            trial_snippet_text = item_obj.get("trial_document_snippet") # Get the new snippet
-            
-            if criterion_text:
-                tasks.append(self._analyze_single_criterion_async(
-                    criterion_text=criterion_text,
-                    original_reasoning=original_reasoning_text, 
-                    trial_document_snippet=trial_snippet_text, # Pass it here
-                    patient_data=patient_data_snippet, 
+        # --- BATCHED LLM ANALYSIS ---
+        if all_criteria_to_analyze:
+             analyzed_results = await self._run_batch_analysis(
+                criteria_list=all_criteria_to_analyze,
+                patient_data_snippet=patient_data_snippet,
                     trial_id=trial_id
-                ))
-            else:
-                logging.warning(f"[{self.name}:{trial_id}] Found item without 'criterion' text: {item_obj}")
-        # --- End Task Creation ---
-        
-        # --- Execute tasks and process results (Same as before) ---
-        if tasks:
-            try:
-                loop = asyncio.get_event_loop()
-                # If running in a context where a loop is already running (e.g. FastAPI),
-                # just await asyncio.gather. Otherwise, use loop.run_until_complete.
-                # For FastAPI, direct await is usually fine.
-                raw_llm_results = await asyncio.gather(*tasks)
-                analyzed_results = [res for res in raw_llm_results if res] # Filter out None results if any
-            except Exception as e:
-                logging.error(f"[{self.name}:{trial_id}] Error during concurrent LLM calls: {e}", exc_info=True)
-                # Populate analyzed_results with error state for each original criterion
-                analyzed_results = [
-                    {"criterion": item.get("criterion"), "status": "ERROR", "evidence": f"LLM analysis failed: {e}", "analysis_source": "System Error"}
-                    for item in all_criteria_to_analyze
-                ]
-        # --- End Execution ---
+             )
+        # --- END BATCHED LLM ANALYSIS ---
 
         # --- Task 5.1.2: Internal Data Search Logic --- 
         internal_search_findings = {}
@@ -591,7 +492,10 @@ class EligibilityDeepDiveAgent(AgentInterface):
         # --- End Post-Analysis Combination ---
 
         # --- Generate Summary (Can be enhanced later) ---
-        summary_text = f"Deep dive completed for {len(analyzed_results)} criteria. "
+        if is_full_dive:
+            summary_text = f"Full deep dive completed for {len(analyzed_results)} criteria. "
+        else:
+            summary_text = f"Deep dive completed for {len(analyzed_results)} criteria. "
         summary_text += f"{len(clarified_items)} criteria were potentially clarified as MET. "
         summary_text += f"{len(remaining_gaps)} criteria remain as NOT_MET, UNCLEAR, or encountered errors."
         # --- End Summary --- 
@@ -741,7 +645,6 @@ class EligibilityDeepDiveAgent(AgentInterface):
             "strategic_next_steps": strategic_next_steps,
             "internal_search_results": internal_search_findings # Add search results to final report
         } 
-
     # --- Internal Search Helper Methods (Task 5.1.2) ---
     def _search_lab_component(self, labs_data: List[Dict[str, Any]], lab_keywords: List[str]) -> List[Dict[str, Any]]:
         """Searches lab data for specific components."""
@@ -863,3 +766,17 @@ class EligibilityDeepDiveAgent(AgentInterface):
         return findings
         
     # --- End Internal Search Helpers --- 
+    
+# This allows the script to be run directly for testing if needed
+if __name__ == '__main__':
+    # Example of how to run the agent
+    async def main():
+        # You would need to mock patient_data, trial_data, etc.
+        # This is just a placeholder for a potential test execution
+        print("EligibilityDeepDiveAgent can be tested here.")
+        # agent = EligibilityDeepDiveAgent()
+        # result = await agent.run(...)
+        # print(result)
+    
+    asyncio.run(main())
+        

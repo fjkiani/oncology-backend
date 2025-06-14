@@ -1,133 +1,173 @@
 import requests
 import asyncio
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional, Iterator
+import time
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ClinicalTrials.gov API base URL
 API_BASE_URL = "https://clinicaltrials.gov/api/v2/studies"
 
 def parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper function to extract relevant fields from a study object."""
+    """
+    Helper function to extract relevant fields from a study object.
+    Enhanced to include trial phase and eligibility criteria.
+    """
     protocol = study.get('protocolSection', {})
     
     # Identifiers
     ids = protocol.get('identificationModule', {})
     nct_id = ids.get('nctId', 'N/A')
+    brief_title = ids.get('briefTitle', 'No Title Available')
     
-    # Status
-    status = protocol.get('statusModule', {})
-    overall_status = status.get('overallStatus', 'Unknown')
+    # Status and Phase
+    status_module = protocol.get('statusModule', {})
+    overall_status = status_module.get('overallStatus', 'Unknown')
     
+    design_module = protocol.get('designModule', {})
+    phases = design_module.get('phases', ['Not Applicable']) # It's a list
+
     # Description
     desc = protocol.get('descriptionModule', {})
-    brief_title = desc.get('briefTitle', 'No Title Available')
     brief_summary = desc.get('briefSummary', 'No Summary Available')
 
     # Conditions
-    cond = protocol.get('conditionsModule', {})
-    conditions = cond.get('conditions', [])
+    cond_module = protocol.get('conditionsModule', {})
+    conditions = cond_module.get('conditions', [])
     
     # Interventions
-    arms_interv = protocol.get('armsInterventionsModule', {})
-    interventions = []
-    for intervention in arms_interv.get('interventions', []):
-        interventions.append(intervention.get('name', 'Unknown Intervention'))
+    arms_interv_module = protocol.get('armsInterventionsModule', {})
+    interventions = [
+        interv.get('name', 'Unknown Intervention') 
+        for interv in arms_interv_module.get('interventions', [])
+    ]
         
+    # Eligibility
+    eligibility_module = protocol.get('eligibilityModule', {})
+    eligibility_criteria = eligibility_module.get('eligibilityCriteria', 'No Criteria Provided')
+
     return {
         "id": nct_id,
         "title": brief_title,
         "status": overall_status,
+        "phases": phases,
         "summary": brief_summary,
         "conditions": conditions,
         "interventions": interventions,
+        "eligibility_criteria": eligibility_criteria,
         "source": "ClinicalTrials.gov"
     }
 
-async def search_clinical_trials(criteria: Dict[str, Any], max_results: int = 10) -> List[Dict[str, Any]]:
-    """Searches ClinicalTrials.gov based on provided criteria.
+async def fetch_all_trials_generator(
+    criteria: Dict[str, Any], 
+    page_size: int = 100,
+    max_pages: Optional[int] = None
+) -> Iterator[List[Dict[str, Any]]]:
+    """
+    A generator that fetches all clinical trials from ClinicalTrials.gov page by page.
+
+    This is memory-efficient as it yields one page of parsed studies at a time
+    instead of loading all studies into memory.
 
     Args:
-        criteria: A dictionary containing search parameters. 
-                  Example: {'query.cond': 'glioblastoma', 'query.intr': 'CAR-T'}
-                  See API documentation for available fields: 
-                  https://clinicaltrials.gov/data-api/api
-        max_results: Maximum number of studies to return.
+        criteria: A dictionary containing search parameters for the API.
+        page_size: The number of results to fetch per API call. Max is 1000.
+        max_pages: A limit on the number of pages to fetch, for testing purposes.
+                   If None, it will fetch all available pages.
 
-    Returns:
-        A list of dictionaries, each containing details of a clinical trial.
-        Returns an empty list on error.
+    Yields:
+        A list of parsed study dictionaries for each page.
     """
-    results = []
-    params = {
-        "format": "json",
-        "countTotal": "true", # Get total count for potential pagination later
-        "pageSize": max_results
-    }
-    
-    # Add criteria to params - API uses dot notation in query params
-    for key, value in criteria.items():
-        if value: # Only add criteria if they have a value
-            params[key] = value
+    page_token: Optional[str] = None
+    pages_fetched = 0
+
+    logger.info(f"Starting trial fetch with criteria: {criteria}, page size: {page_size}")
+
+    while True:
+        params = {
+            "format": "json",
+            "countTotal": "true",
+            "pageSize": page_size,
+            **criteria  # Unpack criteria into params
+        }
+        
+        if page_token:
+            params["pageToken"] = page_token
+                
+        logger.info(f"Fetching page {pages_fetched + 1}...")
+        
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None, 
+                lambda: requests.get(API_BASE_URL, params=params, timeout=30)
+            )
+            response.raise_for_status()
+            data = response.json()
             
-    print(f"Searching ClinicalTrials.gov with params: {params}")
-    
-    try:
-        # Use asyncio.to_thread for non-blocking IO with requests
-        loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None, 
-            lambda: requests.get(API_BASE_URL, params=params, timeout=20) # Increased timeout
-        )
-        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-        data = response.json()
-        
-        total_count = data.get('totalCount', 0)
-        print(f"ClinicalTrials.gov API found {total_count} total studies.")
-        
-        studies = data.get('studies', [])
-        if studies:
-            print(f"Parsing top {len(studies)} studies...")
-            for study in studies:
-                try:
-                    parsed = parse_study(study)
-                    results.append(parsed)
-                except Exception as e:
-                     print(f"Error parsing study (NCT ID maybe?): {e} - Skipping study.")
-                     continue
-            print(f"Successfully parsed {len(results)} clinical trials.")
-        else:
-            print("No studies found in the API response.")
+            if pages_fetched == 0:
+                total_count = data.get('totalCount', 0)
+                logger.info(f"API reports a total of {total_count} studies available.")
             
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data from ClinicalTrials.gov API: {e}")
-        return []
-    except Exception as e:
-        print(f"An unexpected error occurred during ClinicalTrials.gov search: {e}")
-        return []
-        
-    return results
+            studies = data.get('studies', [])
+            if not studies:
+                logger.info("No more studies found on this page. Ending fetch.")
+                break
+
+            parsed_studies = [parse_study(study) for study in studies]
+            yield parsed_studies
+            
+            page_token = data.get('nextPageToken')
+            if not page_token:
+                logger.info("No 'nextPageToken' found. This was the last page.")
+                break
+
+            pages_fetched += 1
+            if max_pages is not None and pages_fetched >= max_pages:
+                logger.info(f"Reached max_pages limit of {max_pages}. Stopping fetch.")
+                break
+
+            # Per project rules, be polite to the API server.
+            time.sleep(0.5)
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed on page {pages_fetched + 1}: {e}")
+            logger.info("Stopping fetch due to API error.")
+            break
+        except Exception as e:
+            logger.error(f"An unexpected error occurred on page {pages_fetched + 1}: {e}")
+            break
 
 # Example Usage (for testing this module directly)
 if __name__ == '__main__':
-    async def test_search():
-        test_criteria = {
-            'query.cond': 'Non-small cell lung cancer', 
-            'query.intr': 'osimertinib', 
-            'query.term': 'phase 3' # Example using term for phase
-        }
-        print(f"--- Testing ClinicalTrials.gov Search with criteria: {test_criteria} ---")
-        search_results = await search_clinical_trials(test_criteria, max_results=5)
+    async def test_generator_search():
+        # A broad query to fetch many results
+        test_criteria = {'query.cond': 'cancer'}
         
-        if search_results:
-            print(f"\n--- Found {len(search_results)} Results ---")
-            for i, result in enumerate(search_results):
-                print(f"\nResult {i+1}:")
-                print(f"  NCT ID: {result['id']}")
-                print(f"  Title: {result['title']}")
-                print(f"  Status: {result['status']}")
-                print(f"  Conditions: {result['conditions']}")
-                print(f"  Interventions: {result['interventions']}")
-                print(f"  Summary: {result['summary'][:200]}...")
+        print(f"\n--- Testing fetch_all_trials_generator with a 2-page limit ---")
+        
+        fetched_trials = []
+        pages_count = 0
+        async for page_of_trials in fetch_all_trials_generator(test_criteria, page_size=5, max_pages=2):
+            pages_count += 1
+            print(f"--- Received Page {pages_count} with {len(page_of_trials)} trials ---")
+            fetched_trials.extend(page_of_trials)
+        
+        print(f"\n--- Generator Test Complete ---")
+        print(f"Total trials fetched: {len(fetched_trials)} across {pages_count} pages.")
+        
+        if fetched_trials:
+            print("\n--- Verifying content of the first fetched trial ---")
+            first_trial = fetched_trials[0]
+            print(f"  ID: {first_trial.get('id')}")
+            print(f"  Title: {first_trial.get('title')}")
+            print(f"  Status: {first_trial.get('status')}")
+            print(f"  Phases: {first_trial.get('phases')}")
+            print(f"  Eligibility Criteria (first 100 chars): {first_trial.get('eligibility_criteria', '')[:100]}...")
         else:
-            print("\n--- No results returned from search_clinical_trials ---")
+            print("\n--- No results were returned from the generator ---")
             
-    asyncio.run(test_search())
+    asyncio.run(test_generator_search())

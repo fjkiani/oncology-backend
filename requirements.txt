@@ -1,20 +1,9 @@
 fastapi
-uvicorn[standard]
+requests
 python-dotenv
 google-generativeai
-decouple # Added for blockchain utils
-web3 # Added for blockchain utils
-requests # Added for blockchain utils
-biopython # For PubMed integration
-
-# LangChain Core and Integrations
-pydantic>=2.0.0,<3.0.0
-langchain~=0.1.16
-langchain-core~=0.1.45
-langchain-community~=0.0.32
-langchain-google-genai~=1.0.1
-
-chromadb # Added chromadb for vector store capabilities
-# sentence-transformers # Removed: Not needed with Google Embeddings, very large
-# torch --index-url https://download.pytorch.org/whl/cpu # Removed: Not needed with Google Embeddings, very large
-sentence-transformers
+astrapy
+uvicorn
+langchain-google-genai
+web3
+biopython

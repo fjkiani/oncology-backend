@@ -1003,84 +1003,34 @@ async def read_root():
 # --- Add Request Model ---
 class TrialSearchRequest(BaseModel):
     query: str = Field(..., description="The search query text entered by the user.")
-    # Use the more specific PatientContext model defined later
     patient_context: Optional['PatientContext'] = Field(default=None, description="Optional patient context data.")
+    page_state: Optional[str] = Field(default=None, description="The page state token for pagination.")
 
 # --- NEW Clinical Trial Search Endpoint --- 
 @app.post("/api/search-trials")
 async def search_clinical_trials(request: TrialSearchRequest):
-    """
-    Endpoint to search for clinical trials using the ClinicalTrialAgent.
-    Receives search query and optional patient context.
-    
-    *** DEVELOPMENT NOTE: Mock data removed. Agent call re-enabled. ***
-    """
-    logging.info(f"Received trial search request. Query: '{request.query}', Patient Context Provided: {request.patient_context is not None}")
-    
-    # --- MOCK DATA (Commented Out) --- 
-    # mock_action_suggestions = [...]
-    # mock_found_trial = {...}
-    # mock_result_data = {...}
-    # return {
-    #     "success": True, 
-    #     "data": mock_result_data 
-    # }
-    # --- END MOCK DATA ---
-
-    # --- Original Agent Call (Re-enabled) ---
-    agent = ClinicalTrialAgent() # Instantiate the agent
-    
-    # Prepare context and kwargs for the agent
-    # Agent expects patient data under 'patient_data' key in context
-    context = {"patient_data": request.patient_context.model_dump() if request.patient_context else {}} 
-    kwargs = {"prompt": request.query} # Pass query as prompt
-    
+    """Uses ClinicalTrialAgent to search for trials based on a query."""
+    logging.info(f"Received trial search request with query: '{request.query}' and page_state: '{request.page_state}'")
     try:
-        # Run the agent asynchronously
-        result = await agent.run(patient_data=context.get("patient_data"), prompt_details=kwargs)
-        logging.info(f"ClinicalTrialAgent Result Status: {result.get('status')}")
+        agent = ClinicalTrialAgent()
+        # The agent's run method now directly handles the query and pagination.
+        results = await agent.run(
+            query=request.query, 
+            patient_context=request.patient_context.dict() if request.patient_context else None,
+            page_state=request.page_state
+        )
         
-        # Check agent status and return appropriate response
-        if result.get("status") == "success":
-            agent_output = result.get("output", {})
-            logging.info(f"[/api/search-trials] Agent output received: {json.dumps(agent_output, indent=2)}") # Log the full agent_output
-
-            found_trials = agent_output.get("found_trials", []) 
-            logging.info(f"[/api/search-trials] Initial found_trials (from agent_output.get('found_trials')): {len(found_trials)} trials.")
-
-            if "trials_with_assessment" in agent_output and not found_trials:
-                 logging.info(f"[/api/search-trials] 'trials_with_assessment' key found and initial found_trials is empty. Adapting. Count: {len(agent_output['trials_with_assessment'])}")
-                 found_trials = agent_output["trials_with_assessment"]
-            
-            logging.info(f"[/api/search-trials] Final found_trials before returning to frontend: {len(found_trials)} trials.")
-            if len(found_trials) > 0:
-                logging.debug(f"[/api/search-trials] First trial in final list: {json.dumps(found_trials[0], indent=2)}")
-
-
-            return {
-                "success": True, 
-                "data": { "found_trials": found_trials } # Return trials under data.found_trials
+        # The frontend expects a specific wrapper structure, now including pagination state.
+        return {
+            "success": True,
+            "data": {
+                "found_trials": results.get("results", []),
+                "next_page_state": results.get("next_page_state")
             }
-        elif result.get("status") == "clarification_needed":
-             # For now, treat clarification needed as no results found, 
-             # could enhance later to pass clarification message back
-              return {
-                "success": True, 
-                "data": {"found_trials": []}, 
-                "message": result.get("summary", "Search criteria unclear.")
-            }
-        else: # error or other status
-             logging.error(f"ClinicalTrialAgent run failed: {result.get('summary')}")
-             raise HTTPException(
-                status_code=500, 
-                detail=result.get("summary", "Agent failed to run")
-            )
-             
+        }
     except Exception as e:
-        logging.error(f"Error running ClinicalTrialAgent or processing request: {e}", exc_info=True)
-        # Return a standard error response
-        raise HTTPException(status_code=500, detail=f"Failed to search trials: {str(e)}")
-    # --- End Original Agent Call ---
+        logging.error(f"Error in /api/search-trials endpoint: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # --- Data Models ---
 class PatientContext(BaseModel):
@@ -1095,6 +1045,7 @@ class PatientContext(BaseModel):
 class TrialSearchRequest(BaseModel):
     query: str
     patient_context: Optional[PatientContext] = None # Use the refined model
+    page_state: Optional[str] = None
 
 class ConsultationRequest(BaseModel):
     room_id: str
@@ -1243,9 +1194,26 @@ class DeepDiveRequest(BaseModel):
 
 @app.post("/api/request-deep-dive")
 async def request_deep_dive(request: DeepDiveRequest):
-    """Triggers the EligibilityDeepDiveAgent to analyze specific criteria."""
-    logging.info(f"Received request for deep dive analysis for trial: {request.trial_data.get('nct_id', 'N/A')}")
+    """
+    Receives a request to perform a detailed eligibility analysis for a specific trial
+    using the patient's full context.
+    """
+    # --- Add temporary logging to inspect the incoming request ---
+    logging.info(f"--- INCOMING DEEP DIVE REQUEST ---")
+    try:
+        logging.info(request.model_dump_json(indent=2))
+    except Exception as e:
+        logging.error(f"Could not dump request model to JSON: {e}")
+    logging.info(f"--- END DEEP DIVE REQUEST ---")
+    # --- End temporary logging ---
     
+    trial_id = request.trial_data.get("id", "UNKNOWN_TRIAL")
+    logging.info(f"Received request for deep dive analysis for trial: {trial_id}")
+    
+    # --- ADDING MORE LOGGING ---
+    logging.info(f"TRIAL DATA being passed to agent: {json.dumps(request.trial_data, indent=2)}")
+    # --- END LOGGING ---
+
     try:
         agent = EligibilityDeepDiveAgent()
         
@@ -1257,7 +1225,6 @@ async def request_deep_dive(request: DeepDiveRequest):
         return report
         
     except Exception as e:
-        trial_id = request.trial_data.get('nct_id', 'N/A')
         logging.error(f"Error during deep dive analysis for trial {trial_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500, 
