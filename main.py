@@ -108,14 +108,12 @@ async def get_all_tasks():
 origins = [
     "http://localhost:5173",  # Assuming default Vite dev server port
     "http://localhost:3000",  # Common React dev server port
-    "https://oncology-co-pilot.vercel.app", # Added Vercel production frontend URL
-
     # Add any other origins if necessary (e.g., deployed frontend URL)
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"], # Temporarily allow all origins for debugging
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
