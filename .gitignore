@@ -101,3 +101,51 @@ Thumbs.db
 variant-analysis-evo2-main/
 CRISPResso2-master copy/
 CRISPResso2-master/
+
+# Database files
+*.sqlite3
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Log files
+logs/
+
+# VS Code settings
+.vscode/
