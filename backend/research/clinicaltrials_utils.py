@@ -21,6 +21,7 @@ def parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
     # Identifiers
     ids = protocol.get('identificationModule', {})
     nct_id = ids.get('nctId', 'N/A')
+    brief_title = ids.get('briefTitle', 'No Title Available')
     
     # Status and Phase
     status_module = protocol.get('statusModule', {})
@@ -31,7 +32,6 @@ def parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
 
     # Description
     desc = protocol.get('descriptionModule', {})
-    brief_title = desc.get('briefTitle', 'No Title Available')
     brief_summary = desc.get('briefSummary', 'No Summary Available')
 
     # Conditions

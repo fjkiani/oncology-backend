@@ -19,6 +19,8 @@ from astrapy.constants import VectorMetric
 from astrapy.info import CollectionDefinition
 import torch
 import nltk
+import argparse
+from typing import Optional
 
 # Configure basic logging
 logging.basicConfig(
@@ -74,7 +76,9 @@ def wipe_databases(db_manager: DatabaseConnections):
                 summary TEXT,
                 conditions TEXT,
                 interventions TEXT,
-                source TEXT
+                source TEXT,
+                inclusion_criteria TEXT,
+                exclusion_criteria TEXT
             )
         """)
         
@@ -123,7 +127,7 @@ def wipe_databases(db_manager: DatabaseConnections):
 # Global model instance
 model = None
 
-async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batch_size=100):
+async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages: Optional[int] = None, batch_size=100):
     """
     Fetches trial data from the API page by page and loads it into the databases.
     This will orchestrate the work of both the Extractor and the Loader.
@@ -148,14 +152,16 @@ async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batc
         logger.info(f"Sentence transformer model initialized on device: {model.device}")
 
     # --- Data Extractor and Loader Integration ---
-    search_criteria = {'query.cond': 'cancer'}
+    # To fetch ALL trials, we leave the search criteria empty.
+    search_criteria = {}
     
     total_trials_processed = 0
     page_num = 0
     sql_batch = []
     vector_batch = []
 
-    async for page_of_trials in fetch_all_trials_generator(search_criteria, page_size=100, max_pages=5):
+    # Use the max_pages argument here
+    async for page_of_trials in fetch_all_trials_generator(search_criteria, page_size=100, max_pages=max_pages):
         logger.info(f"Processing page with {len(page_of_trials)} trials...")
 
         for trial in page_of_trials:
@@ -163,12 +169,32 @@ async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batc
             
             # 1. Prepare data for SQLite (metadata)
             sql_data = parsed_data.copy()
-            del sql_data['eligibility_criteria']
+            
+            # Split eligibility criteria into inclusion and exclusion
+            eligibility_text = sql_data.pop('eligibility_criteria', '')
+            inclusion_criteria = ""
+            exclusion_criteria = ""
+            
+            # Simple heuristic: Split on "Exclusion" or "Key Exclusion"
+            if "Key Exclusion Criteria:" in eligibility_text:
+                parts = eligibility_text.split("Key Exclusion Criteria:", 1)
+                inclusion_criteria = parts[0].replace("Key Inclusion Criteria:", "").strip()
+                exclusion_criteria = parts[1].strip()
+            elif "Exclusion Criteria:" in eligibility_text:
+                parts = eligibility_text.split("Exclusion Criteria:", 1)
+                inclusion_criteria = parts[0].replace("Inclusion Criteria:", "").strip()
+                exclusion_criteria = parts[1].strip()
+            else:
+                inclusion_criteria = eligibility_text
 
             # Convert lists to JSON strings for SQLite
             for key in ['phases', 'conditions', 'interventions']:
                 if key in sql_data and isinstance(sql_data[key], list):
                     sql_data[key] = json.dumps(sql_data[key])
+            
+            # Add eligibility criteria
+            sql_data['inclusion_criteria'] = inclusion_criteria
+            sql_data['exclusion_criteria'] = exclusion_criteria
             
             sql_batch.append(sql_data)
 
@@ -213,7 +239,7 @@ async def fetch_and_load_data(db_manager: DatabaseConnections, max_pages=5, batc
                 vector_batch.append({
                     "_id": f"{parsed_data['id']}_{i}", # Create a unique ID for each chunk
                     "text": chunk,
-                    "trial_id": parsed_data['id'] # Keep a reference to the parent trial
+                    "nct_id": parsed_data['id'] # Keep a reference to the parent trial, using nct_id to match search
                 })
 
         # Every BATCH_SIZE, execute a batch insert
@@ -250,7 +276,7 @@ def _execute_batch_inserts(cursor, sql_batch: list, trials_collection, vector_ba
     # --- SQLite Batch Insert ---
     try:
         placeholders = ", ".join(["?"] * len(sql_batch[0]))
-        sql = f"INSERT INTO trials (id, title, status, phases, summary, conditions, interventions, source) VALUES ({placeholders})"
+        sql = f"INSERT INTO trials (id, title, status, phases, summary, conditions, interventions, source, inclusion_criteria, exclusion_criteria) VALUES ({placeholders})"
         cursor.executemany(sql, sql_batch)
         cursor.connection.commit()
         logger.info(f"Successfully inserted batch of {len(sql_batch)} records into SQLite.")
@@ -269,11 +295,17 @@ def _execute_batch_inserts(cursor, sql_batch: list, trials_collection, vector_ba
         embeddings = model.encode(texts_to_embed, show_progress_bar=False).tolist()
 
         # Add the generated vector to each item in the batch
+        documents_to_insert = []
         for i, item in enumerate(vector_batch):
-            item["$vector"] = embeddings[i]
+            documents_to_insert.append({
+                "_id": item["_id"],  # Fixed: access _id field as stored in vector_batch
+                "$vector": embeddings[i],
+                "text": item["text"],
+                "nct_id": item["nct_id"]  # Changed from trial_id to nct_id
+            })
 
         # Use insert_many for batch insertion
-        trials_collection.insert_many(vector_batch)
+        trials_collection.insert_many(documents_to_insert)
         logger.info(f"Successfully inserted batch of {len(vector_batch)} vector documents into AstraDB.")
     except Exception as e:
         logger.error(f"Error batch inserting into AstraDB: {e}")
@@ -282,6 +314,10 @@ def _execute_batch_inserts(cursor, sql_batch: list, trials_collection, vector_ba
 
 def main():
     """Main function to orchestrate the ETL pipeline."""
+    parser = argparse.ArgumentParser(description="Clinical Trials ETL Pipeline")
+    parser.add_argument("--limit", type=int, default=None, help="Limit the number of pages to fetch from the API for testing.")
+    args = parser.parse_args()
+
     logger.info("--- Clinical Trials ETL Pipeline Started ---")
     start_time = time.time()
 
@@ -291,8 +327,8 @@ def main():
         wipe_databases(db_manager)
         
         # Step 2: Fetch new data and load it
-        # Since our fetch function is now async, we need to run it in an event loop.
-        asyncio.run(fetch_and_load_data(db_manager))
+        # Pass the limit from command line args to the async function
+        asyncio.run(fetch_and_load_data(db_manager, max_pages=args.limit))
         
     end_time = time.time()
     logger.info(f"--- Clinical Trials ETL Pipeline Finished in {end_time - start_time:.2f} seconds ---")
