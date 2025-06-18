@@ -1,0 +1,180 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Cursor Rules – Frontend Sync for Clinical Trial Matching
+
+This document outlines variable naming conventions, API response structures, and integration expectations derived from the React frontend. It ensures Cursor aligns backend responses to the frontend logic and naming needs.
+
+---
+
+### 🔤 Naming Conventions
+
+* Use `camelCase` for JSON keys returned to frontend.
+
+  * Examples: `trialId`, `trialTitle`, `patientId`, `searchResults`
+* Use `snake_case` internally in backend logic (e.g., `eligibility_criteria`, `nct_id`) but **convert to camelCase in API responses**.
+* Maintain consistent trial metadata fields across backend and frontend:
+
+  * `nct_id`, `title`, `status`, `phase`, `source_url`
+
+---
+
+### 🔎 Search & Query Logic
+
+* Frontend expects:
+
+  * `/api/search-trials` – accepts POST body:
+
+    ```json
+    {
+      "query": "lung cancer",
+      "patient_context": { ...patientData }
+    }
+    ```
+  * `/api/clinicaltrials/search` – expects POST body:
+
+    ```json
+    {
+      "criteria": {
+        "query.cond": "Glioblastoma",
+        "query.intr": "CAR-T"
+      }
+    }
+    ```
+
+---
+
+### 🧠 Trial Result Object (Required Fields)
+
+* API responses should return trials in this structure:
+
+```json
+{
+  "nct_id": "NCT1234",
+  "title": "Title of the Trial",
+  "status": "Recruiting",
+  "phase": "Phase II",
+  "source_url": "https://...",
+  "llm_assessment": {
+    "eligibility_status": "Likely Eligible",
+    "summary": "AI-generated summary text.",
+    "met_criteria": [...],
+    "unmet_criteria": [...],
+    "unclear_criteria": [...]
+  },
+  "action_suggestions": [
+    {
+      "suggestion": "Follow-up on imaging",
+      "criterion": "Imaging required",
+      "draft_text": "Patient should be scheduled for MRI."
+    }
+  ]
+}
+```
+
+---
+
+### 🧍 Patient Context Object
+
+Used in searches, planning, and detail requests:
+
+```json
+{
+  "patientId": "1234",
+  "demographics": {
+    "name": "Jane Doe",
+    "dob": "1972-05-01",
+    "gender": "Female"
+  },
+  "diagnosis": {
+    "primary": "Ovarian Cancer",
+    "date": "2024-03-11"
+  }
+}
+```
+
+---
+
+### ✅ Follow-Up Tasks
+
+When creating tasks via `/api/plan-followups`, backend should accept:
+
+```json
+{
+  "action_suggestions": [...],
+  "patient_id": "1234",
+  "trial_id": "NCT456",
+  "trial_title": "Some Trial"
+}
+```
+
+And return:
+
+```json
+{
+  "success": true,
+  "planned_tasks": [
+    {
+      "id": "generated_id",
+      "columnId": "followUpNeeded",
+      "patientId": "1234",
+      "trial_id": "NCT456",
+      "title": "Follow up on eligibility",
+      "status": "Pending"
+    }
+  ]
+}
+```
+
+---
+
+### 🔬 Trial Detail Endpoint (`/api/trial-details/{nct_id}`)
+
+Response format:
+
+```json
+{
+  "success": true,
+  "data": { ...trialResultObject }
+}
+```
+
+---
+
+### 🔎 Deep Dive Endpoint (optional)
+
+Request body:
+
+```json
+{
+  "unmet_criteria": [...],
+  "unclear_criteria": [...],
+  "patient_data": { ... },
+  "trial_data": { ... }
+}
+```
+
+Response body:
+
+```json
+{
+  "summary": "...",
+  "clarified_items": [...],
+  "gaps_with_potential_context": [...],
+  "gaps_requiring_external_data": [...],
+  "refined_next_steps": [...]
+}
+```
+
+---
+
+### 🤖 Cursor Naming Alignment Summary
+
+* `nct_id`, `patient_id`, `trial_id` → used as keys, always align with frontend props.
+* `llm_assessment`, `action_suggestions`, and `unmet_criteria` are expected field names.
+* Response fields must always follow **camelCase** unless consumed directly by backend logic.
+* Everytime you make an update on something new like a variable then let me know if i need to make a change on my front end.
+
+These rules ensure all backend logic outputs are consistent with frontend expectations and UI display logic.

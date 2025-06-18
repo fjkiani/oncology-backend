@@ -1,0 +1,115 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Cursor Coding Rules for Clinical Trial Matching Project
+
+These rules are to be used by Cursor to guide all code-related operations for this project.
+
+---
+
+### ✅ GENERAL GUIDELINES
+
+1. **Respect Existing Code Context:**
+
+   * Before writing any code, read the surrounding code comments and structure to avoid conflicts.
+   * Do **not** remove or overwrite existing code **unless** explicitly told to or if a comment like `# replace with...` is present.
+   *Everytime you make an update on something new like a variable then let me know if i need to make a change on my front end.
+
+2. **Version Compatibility:**
+
+   * Use **AstraPy v2.0.1** for all AstraDB interactions.
+   * Ensure code adheres to correct syntax and best practices for this version.
+
+3. **User Consent Before Code Changes:**
+
+   * Always generate an explanation first before making changes.
+   * Wait for confirmation or user prompt before modifying or adding code.
+
+4. **Modular & Reusable Code:**
+
+   * Write modular code using helper functions and centralized utility files.
+   * Keep logic consistent with existing project architecture (e.g., FastAPI, Pythonic naming).
+
+5. **Security First:**
+
+   * Never hardcode credentials.
+   * Always use `os.getenv()` for environment variables and ensure `.env` files or secrets are kept out of version control.
+
+---
+
+### 🔁 PHASE-SPECIFIC RULES
+
+#### Phase 1: Database Setup & Migration
+
+* Setup should include both `SQLite` and `AstraDB` (or pgVector).
+* Add all connection logic to `backend/utils/database_connections.py`.
+* Create a temporary test script `test_db_connection.py` for connectivity and CRUD checks.
+
+#### Phase 2: Data Pipeline Script
+
+* Use `backend/scripts/load_trials_from_api.py`.
+* Extract logic must include pagination and `time.sleep(0.5)` delay between calls.
+* Transform logic must reuse existing text chunking and embedding methods.
+* Load logic must use environment-secured connections and follow a "wipe and reload" strategy.
+* Add detailed `logging` output throughout.
+* Unit testing should mock NCI API using `requests-mock`.
+
+##### 🧠 Additional Data Pipeline Logic:
+
+* Use **nextPageToken** to paginate through all trials from the API (total: \~540,658).
+* Each loop iteration should:
+
+  1. Parse study object using `parse_study()`.
+  2. Save metadata (id, title, status, etc.) to **SQLite**.
+  3. Extract `eligibilityCriteria` and create embeddings using the model.
+  4. Save the resulting vector and metadata to **AstraDB**.
+  5. Do this incrementally — page by page — for memory efficiency.
+* This should be implemented as a **full refresh** system (deletes old and reloads from scratch).
+* For exploring the API:
+
+  * Modify the script's `__main__` block to inspect fields.
+  * Use `curl` for raw API checks.
+  * Always consult the official API documentation for field structure.
+
+#### Phase 3: Automation & Scheduling
+
+* Create `run_pipeline.sh` with steps: navigate, activate env, load env vars, run pipeline.
+* Schedule using `cron` at 2:00 AM daily.
+* Test manual execution and simulate failure for log capture.
+
+#### Phase 4: Application Integration
+
+* Modify `clinical_trial_agent.py` to use the new `database_connections.py` for live data.
+* Ensure agents pull from updated data source.
+* Conduct full UI-based E2E testing for correctness and performance.
+
+#### Phase 5: Front-End & Features
+
+* Create `/research/trials-browser` with filter/search capabilities.
+* Add `/api/trials` and `/api/pipeline-status` endpoints.
+* Build pagination into search results.
+
+---
+
+### ⚠️ CAUTION ZONES
+
+* Avoid touching business logic in `clinical_trial_agent.py` without reason.
+* Never replace a file or function unless explicitly stated.
+* Do not add large third-party libraries unless justified and approved.
+
+---
+
+### 🔍 CHANGE APPROVAL FLOW
+
+For any change:
+
+1. Explain what you plan to do.
+2. Explain why this method is chosen.
+3. Wait for confirmation.
+4. Then and only then, make the code change.
+
+---
+
+These rules are to be loaded into Cursor context with every request for this project. Assume these as always-on constraints.
