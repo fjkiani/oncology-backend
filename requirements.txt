@@ -1,0 +1,10 @@
+fastapi
+requests
+python-dotenv
+google-generativeai
+astrapy
+uvicorn
+langchain-google-genai
+web3
+biopython
+litellm 
