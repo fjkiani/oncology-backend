@@ -1031,50 +1031,39 @@ async def search_clinical_trials(request: TrialSearchRequest):
     # --- Original Agent Call (Re-enabled) ---
     agent = ClinicalTrialAgent() # Instantiate the agent
     
-    # Prepare context and kwargs for the agent
-    # Agent expects patient data under 'patient_data' key in context
-    context = {"patient_data": request.patient_context.model_dump() if request.patient_context else {}} 
-    kwargs = {"prompt": request.query} # Pass query as prompt
-    
     try:
-        # Run the agent asynchronously
-        result = await agent.run(patient_data=context.get("patient_data"), prompt_details=kwargs)
-        logging.info(f"ClinicalTrialAgent Result Status: {result.get('status')}")
+        # Run the agent asynchronously, passing the query correctly
+        result = await agent.run(
+            patient_data=request.patient_context.model_dump() if request.patient_context else None, 
+            prompt_details={"query": request.query}
+        )
         
         # Check agent status and return appropriate response
-        if result.get("status") == "success":
-            agent_output = result.get("output", {})
-            logging.info(f"[/api/search-trials] Agent output received: {json.dumps(agent_output, indent=2)}") # Log the full agent_output
-
-            found_trials = agent_output.get("found_trials", []) 
-            logging.info(f"[/api/search-trials] Initial found_trials (from agent_output.get('found_trials')): {len(found_trials)} trials.")
-
-            if "trials_with_assessment" in agent_output and not found_trials:
-                 logging.info(f"[/api/search-trials] 'trials_with_assessment' key found and initial found_trials is empty. Adapting. Count: {len(agent_output['trials_with_assessment'])}")
-                 found_trials = agent_output["trials_with_assessment"]
+        if result and result.get("status") == "success":
+            # The agent now returns either 'trials_with_assessment' or 'found_trials'
+            # The frontend expects a 'data' object containing 'found_trials'
+            # We will adapt the agent's output to fit this structure.
             
-            logging.info(f"[/api/search-trials] Final found_trials before returning to frontend: {len(found_trials)} trials.")
-            if len(found_trials) > 0:
-                logging.debug(f"[/api/search-trials] First trial in final list: {json.dumps(found_trials[0], indent=2)}")
-
-
+            assessed_trials = result.get("trials_with_assessment", [])
+            unassessed_trials = result.get("found_trials", [])
+            
+            # Combine assessed and unassessed trials if necessary, prioritizing assessed.
+            # The frontend seems to handle both structures if they are in found_trials array.
+            final_trials = assessed_trials if assessed_trials else unassessed_trials
+            
+            logging.info(f"[/api/search-trials] Agent run successful. Returning {len(final_trials)} trials to frontend.")
             return {
                 "success": True, 
-                "data": { "found_trials": found_trials } # Return trials under data.found_trials
+                "data": {"found_trials": final_trials}
             }
-        elif result.get("status") == "clarification_needed":
-             # For now, treat clarification needed as no results found, 
-             # could enhance later to pass clarification message back
-              return {
-                "success": True, 
-                "data": {"found_trials": []}, 
-                "message": result.get("summary", "Search criteria unclear.")
-            }
-        else: # error or other status
-             logging.error(f"ClinicalTrialAgent run failed: {result.get('summary')}")
+        else: # Handle error or other statuses from the agent
+             error_message = "Agent failed to run or returned an error."
+             if result and result.get("message"):
+                 error_message = result.get("message")
+             logging.error(f"ClinicalTrialAgent run failed: {error_message}")
              raise HTTPException(
                 status_code=500, 
-                detail=result.get("summary", "Agent failed to run")
+                detail=error_message
             )
              
     except Exception as e:

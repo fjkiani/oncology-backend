@@ -18,3 +18,4 @@ chromadb # Added chromadb for vector store capabilities
 # sentence-transformers # Removed: Not needed with Google Embeddings, very large
 # torch --index-url https://download.pytorch.org/whl/cpu # Removed: Not needed with Google Embeddings, very large
 sentence-transformers
+astrapy==2.0.1

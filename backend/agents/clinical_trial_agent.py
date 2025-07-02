@@ -22,6 +22,10 @@ from chromadb.utils import embedding_functions
 # Import the base class
 from backend.core.agent_interface import AgentInterface
 
+# --- NEW Imports for AstraDB and SentenceTransformer ---
+from backend.database_connections import DatabaseConnections
+# --- END NEW Imports ---
+
 # --- NEW Import --- 
 from backend.agents.action_suggester import get_action_suggestions_for_trial
 
@@ -128,71 +132,48 @@ class ClinicalTrialAgent(AgentInterface):
 
     def __init__(self):
         """
-        Initialize the agent, including ChromaDB client and LLM client.
-        Uses Google's embedding API instead of local models for better deployment compatibility.
+        Initialize the agent, including DB connections, embedding model, and LLM client.
         """
-        self.chroma_client = None
-        self.chroma_collection = None
+        self.db_manager = DatabaseConnections()
+        self.embedding_model = None
         self.llm_client = None
-        self.embedding_function = None
+        self.astra_collection = None
 
-        # --- Initialize Google Generative AI Client ---
+        # --- Initialize Sentence Transformer for Embeddings ---
+        try:
+            logging.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
+            self.embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+            logging.info("Embedding model initialized successfully.")
+        except Exception as e:
+            logging.error(f"Failed to initialize SentenceTransformer model: {e}", exc_info=True)
+
+        # --- Initialize Google Generative AI Client for Assessments ---
         if not GOOGLE_API_KEY:
-            logging.error("GOOGLE_API_KEY not found in environment variables. LLM and embedding features will be disabled.")
-            self.llm_client = None
-            self.embedding_function = None
+            logging.error("GOOGLE_API_KEY not found in environment variables. LLM assessment features will be disabled.")
         else:
             try:
                 logging.info("Configuring Google Generative AI...")
                 genai.configure(api_key=GOOGLE_API_KEY)
-                logging.info(f"Initializing Google Generative Model: {LLM_MODEL_NAME}")
-                # Apply JSON config during initialization if possible, or during generate_content call
                 self.llm_client = genai.GenerativeModel(
                     LLM_MODEL_NAME,
-                    generation_config=DEFAULT_LLM_GENERATION_CONFIG # Apply config here
+                    generation_config=DEFAULT_LLM_GENERATION_CONFIG
                 )
-                
-                # Initialize Google embedding function for ChromaDB
-                self.embedding_function = embedding_functions.GoogleGenerativeAiEmbeddingFunction(
-                    api_key=GOOGLE_API_KEY,
-                    model_name="models/embedding-001"
-                )
-                logging.info("Google Generative AI client and embedding function initialized successfully.")
+                logging.info("Google Generative AI client initialized successfully.")
             except Exception as e:
                 logging.error(f"Failed to initialize Google Generative AI client: {e}", exc_info=True)
-                self.llm_client = None
-                self.embedding_function = None
 
-        # --- Initialize ChromaDB ---
+        # --- Initialize AstraDB Connection ---
         try:
-            logging.info(f"Initializing ChromaDB client at: {CHROMA_DB_PATH}")
-            self.chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-            
-            if self.embedding_function: # Only attempt to use ChromaDB if Google API key and EF are available
-                collections = self.chroma_client.list_collections()
-                col_names = [col.name for col in collections]
-                if CHROMA_COLLECTION_NAME in col_names:
-                    logging.info(f"Attempting to get ChromaDB collection: {CHROMA_COLLECTION_NAME} WITH Google Embedding Function.")
-                    try:
-                        self.chroma_collection = self.chroma_client.get_collection(
-                            name=CHROMA_COLLECTION_NAME,
-                            embedding_function=self.embedding_function # Crucial: provide the intended EF
-                        )
-                        logging.info(f"ChromaDB Collection '{CHROMA_COLLECTION_NAME}' loaded successfully WITH Google Embedding Function. Count: {self.chroma_collection.count()}")
-                    except Exception as e:
-                        logging.error(f"Failed to get ChromaDB collection '{CHROMA_COLLECTION_NAME}' WITH Google Embedding Function: {e}. This might be due to an embedding function mismatch if the collection was created with a different one or if there's an issue with the stored metadata. Will disable ChromaDB for this session.", exc_info=True)
-                        self.chroma_collection = None # Disable Chroma if it can't be loaded with the correct EF
-                else:
-                    logging.warning(f"ChromaDB collection '{CHROMA_COLLECTION_NAME}' not found at path '{CHROMA_DB_PATH}'. Available collections: {col_names}. ChromaDB will be disabled.")
-                    self.chroma_collection = None
+            logging.info("Initializing AstraDB connection via DBManager...")
+            # The collection name here should match the one in the loading script
+            self.astra_collection = self.db_manager.get_vector_db_collection("clinical_trials")
+            if self.astra_collection:
+                logging.info("AstraDB collection 'clinical_trials' loaded successfully.")
             else:
-                logging.warning("Google Embedding Function not available (likely missing GOOGLE_API_KEY). ChromaDB will be disabled.")
-                self.chroma_collection = None
-
-        except Exception as e: # Catches errors like PersistentClient creation failure
-            logging.error(f"General failure during ChromaDB client initialization or collection listing: {e}", exc_info=True)
-            self.chroma_client = None
-            self.chroma_collection = None
+                logging.warning("Failed to load AstraDB collection. Vector search will be unavailable.")
+        except Exception as e:
+            logging.error(f"General failure during AstraDB connection initialization: {e}", exc_info=True)
+            self.astra_collection = None
         
         logging.info("ClinicalTrialAgent Initialized.")
 
@@ -205,14 +186,16 @@ class ClinicalTrialAgent(AgentInterface):
         return "Searches for relevant clinical trials based on patient diagnosis, eligibility context, stage, biomarkers, etc. using local vector and relational databases."
 
     def _get_db_connection(self):
-        """ Establishes a connection to the SQLite database. """
+        """ Establishes a connection to the SQLite database using the DBManager. """
         try:
-            conn = sqlite3.connect(SQLITE_DB_PATH)
-            conn.row_factory = sqlite3.Row # Return rows as dictionary-like objects
-            logging.info(f"Connected to SQLite DB: {SQLITE_DB_PATH}")
+            conn = self.db_manager.get_sqlite_connection()
+            if conn:
+                logging.info(f"Connected to SQLite DB via DBManager.")
+            else:
+                logging.error("Failed to get SQLite DB connection from DBManager.")
             return conn
-        except sqlite3.Error as e:
-            logging.error(f"Failed to connect to SQLite DB at {SQLITE_DB_PATH}: {e}")
+        except Exception as e:
+            logging.error(f"Error getting SQLite connection from DBManager: {e}")
             return None
 
     def _build_query_text(self, context: Dict[str, Any], entities: Dict[str, Any], prompt: str) -> str:
@@ -258,11 +241,11 @@ class ClinicalTrialAgent(AgentInterface):
     # --- Refined LLM Helper - Calls NEW Text Parser --- 
     async def _get_llm_assessment_for_trial(self, patient_context: Dict[str, Any], trial_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Generates prompt, calls LLM for STRUCTURED TEXT, parses text response for a single trial."""
-        nct_id = trial_detail.get("nct_id", "UNKNOWN_ID")
+        nct_id = trial_detail.get("id", "UNKNOWN_ID")
         logging.info(f"Starting LLM assessment (structured text) for trial {nct_id}...")
         
-        inclusion_criteria = trial_detail.get('inclusion_criteria_text', None) 
-        exclusion_criteria = trial_detail.get('exclusion_criteria_text', None) 
+        inclusion_criteria = trial_detail.get('inclusion_criteria', None) 
+        exclusion_criteria = trial_detail.get('exclusion_criteria', None) 
 
         if not inclusion_criteria and not exclusion_criteria:
             logging.warning(f"No criteria text found for trial {nct_id}, skipping LLM assessment.")
@@ -284,9 +267,9 @@ class ClinicalTrialAgent(AgentInterface):
         try:
             prompt = self._create_eligibility_prompt(
                 patient_context, 
-                trial_detail.get('brief_title','N/A'), 
-                trial_detail.get('overall_status','N/A'), 
-                trial_detail.get('phase','N/A'), 
+                trial_detail.get('title','N/A'), 
+                trial_detail.get('status','N/A'), 
+                trial_detail.get('phases','N/A'), 
                 inclusion_criteria, 
                 exclusion_criteria
             ) 
@@ -354,7 +337,7 @@ class ClinicalTrialAgent(AgentInterface):
             cursor = conn.cursor()
             placeholders = ','.join('?' * len(nct_ids))
             # Select all columns needed by the frontend/LLM
-            query = f"SELECT * FROM clinical_trials WHERE nct_id IN ({placeholders})"
+            query = f"SELECT * FROM trials WHERE id IN ({placeholders})"
             cursor.execute(query, nct_ids)
             rows = cursor.fetchall()
             # Convert rows to dictionaries
@@ -370,38 +353,78 @@ class ClinicalTrialAgent(AgentInterface):
             logging.error(f"Unexpected error fetching trial details: {e}", exc_info=True)
             return []
 
-    def _fallback_search_trials(self, query: str, limit: int = 10) -> List[str]:
+    def _fallback_search_trials(self, conn: sqlite3.Connection, query: str, limit: int = 10) -> List[str]:
         """
-        Fallback search method that searches SQLite directly when ChromaDB is not available.
-        Uses basic text matching on trial titles and eligibility/description text.
+        Fallback search method that searches SQLite directly.
+        Uses the provided database connection.
         """
         try:
-            conn = self._get_db_connection()
             if not conn:
+                logging.error("Fallback search received no database connection.")
                 return []
             
+            conn.row_factory = sqlite3.Row # Set row_factory for dict-like access
             cursor = conn.cursor()
             
-            # Search in title, eligibility_text, and description_text for the query term
+            # Search in title, summary, and criteria for the query term
             search_query = """
-            SELECT nct_id, title, eligibility_text 
-            FROM clinical_trials 
-            WHERE title LIKE ? OR eligibility_text LIKE ? OR description_text LIKE ?
+            SELECT id FROM trials 
+            WHERE title LIKE ? OR summary LIKE ? OR inclusion_criteria LIKE ? OR exclusion_criteria LIKE ?
             LIMIT ?
             """
             
             search_term = f"%{query}%"
-            logging.info(f"Fallback SQLite search using query: '{query}' on columns: title, eligibility_text, description_text") # Updated log
-            cursor.execute(search_query, (search_term, search_term, search_term, limit))
+            logging.info(f"Fallback SQLite search using query: '{query}' on columns: title, summary, inclusion_criteria, exclusion_criteria")
+            cursor.execute(search_query, (search_term, search_term, search_term, search_term, limit))
             results = cursor.fetchall()
             
-            nct_ids = [row[0] for row in results]
+            nct_ids = [row['id'] for row in results]
             logging.info(f"Fallback search found {len(nct_ids)} trials matching '{query}'")
-            conn.close()
             return nct_ids
             
         except Exception as e:
             logging.error(f"Fallback search failed: {e}", exc_info=True)
+            return []
+
+    def _vector_search_trials(self, query_text: str, n_results: int = 15) -> List[str]:
+        """
+        Performs a vector search in AstraDB to find relevant trial NCT IDs.
+        """
+        if not self.astra_collection:
+            logging.error("AstraDB collection is not available. Cannot perform vector search.")
+            return []
+        
+        if not self.embedding_model:
+            logging.error("Embedding model is not available. Cannot perform vector search.")
+            return []
+            
+        if not query_text:
+            logging.warning("Query text is empty. Skipping vector search.")
+            return []
+
+        try:
+            logging.info(f"Performing vector search in AstraDB with query: '{query_text}'")
+            
+            query_embedding = self.embedding_model.encode(query_text).tolist()
+            
+            results = self.astra_collection.find(
+                sort={"$vector": query_embedding},
+                limit=n_results,
+                projection={"nct_id": 1} # Only need the ID
+            )
+
+            documents = list(results)
+            if not documents:
+                logging.info("AstraDB vector search returned no documents.")
+                return []
+            
+            nct_ids = list(set([doc['nct_id'] for doc in documents if 'nct_id' in doc]))
+            
+            logging.info(f"AstraDB vector search found {len(nct_ids)} unique trials: {nct_ids}")
+            return nct_ids
+
+        except Exception as e:
+            logging.error(f"AstraDB vector search failed: {e}", exc_info=True)
             return []
 
     # --- NEW: Prompt Generation Method --- 
@@ -421,7 +444,7 @@ class ClinicalTrialAgent(AgentInterface):
              patient_profile_json=patient_profile_json,
              trial_title=trial_title,             # Use argument
              trial_status=trial_status,           # Use argument
-             trial_phase=trial_phase,             # Use argument
+             trial_phase=json.dumps(trial_phase),             # Use argument, ensure it's a string
              inclusion_criteria=inclusion_criteria or "(Not provided or not found in source document)",
              exclusion_criteria=exclusion_criteria or "(Not provided or not found in source document)"
          )
@@ -594,235 +617,123 @@ class ClinicalTrialAgent(AgentInterface):
     # --- NEW: Method to run analysis on a SINGLE trial object --- 
     async def run_single_trial_analysis(self, trial_data: Dict[str, Any], patient_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Runs the LLM eligibility assessment for a single, already fetched trial data dictionary.
-        This is used by the /api/trial-details/{trial_id} endpoint.
-
-        Args:
-            trial_data: A dictionary containing the details of the clinical trial.
-            patient_data: A dictionary containing the relevant patient context.
-
-        Returns:
-            A dictionary containing the LLM's assessment results (or error/skip indicators),
-            structured similarly to the output of _get_llm_assessment_for_trial.
+        Runs the full analysis pipeline for a single trial: LLM assessment and action suggestions.
+        Returns a dictionary combining original trial data with analysis results,
+        formatted for the frontend.
         """
-        nct_id = trial_data.get("nct_id", "UNKNOWN_ID")
+        nct_id = trial_data.get("id", "UNKNOWN_ID")
         logging.info(f"Running single trial analysis for {nct_id}")
         
-        if not trial_data:
-            logging.warning("run_single_trial_analysis called with empty trial_data.")
-            return {
-                "llm_eligibility_analysis": None,
-                "overall_assessment": "Error (Missing Trial Data)",
-                "narrative_summary": "Trial data was not provided for analysis."
-            }
+        # 1. Get LLM Assessment
+        llm_assessment_result = await self._get_llm_assessment_for_trial(patient_data, trial_data)
         
-        if not patient_data:
-             logging.warning(f"run_single_trial_analysis called with empty patient_data for {nct_id}.")
-             # Decide if this is fatal or just continue without patient context
-             # For now, let's return an error as assessment is patient-specific
-             return {
-                "llm_eligibility_analysis": None,
-                "overall_assessment": "Error (Missing Patient Data)",
-                "narrative_summary": "Patient data was not provided for analysis."
-             }
-             
-        try:
-            # Call the existing LLM assessment helper method
-            assessment_result = await self._get_llm_assessment_for_trial(
-                patient_context=patient_data, 
-                trial_detail=trial_data
-            )
-            # The helper already formats the output correctly
-            return assessment_result if assessment_result else {
-                "llm_eligibility_analysis": None,
-                "overall_assessment": "Error (Assessment Failed)",
-                "narrative_summary": "The LLM assessment process failed unexpectedly."
-            }
-            
-        except Exception as e:
-            logging.error(f"Unexpected error in run_single_trial_analysis for {nct_id}: {e}", exc_info=True)
-            return {
-                "llm_eligibility_analysis": None,
-                "overall_assessment": "Error (Internal Agent Error)",
-                "narrative_summary": f"An unexpected error occurred within the agent: {e}"
-            }
-    # --- END NEW: Single Trial Analysis Method --- 
+        # 2. Get Action Suggestions and Format LLM Assessment
+        parsed_analysis = {}
+        if llm_assessment_result and llm_assessment_result.get("llm_eligibility_analysis"):
+            parsed_analysis = llm_assessment_result["llm_eligibility_analysis"]
+
+        eligibility_assessment = parsed_analysis.get("eligibility_assessment", {})
+        action_suggestions = get_action_suggestions_for_trial(
+            eligibility_assessment=eligibility_assessment,
+            patient_context=patient_data
+        )
+        
+        # Create the llm_assessment object in the structure the frontend expects
+        llm_assessment_for_frontend = {
+            "summary": parsed_analysis.get("patient_specific_summary", "Summary not available."),
+            "eligibility_status": eligibility_assessment.get("eligibility_summary", "Not Assessed"),
+            "met_criteria": eligibility_assessment.get("met_criteria", []),
+            "unmet_criteria": eligibility_assessment.get("unmet_criteria", []),
+            "unclear_criteria": eligibility_assessment.get("unclear_criteria", [])
+        }
+
+        # 3. Transform and combine results for the frontend
+        phases_list = json.loads(trial_data.get("phases", "[]"))
+        phase_display = phases_list[0] if phases_list else "N/A"
+
+        final_trial_output = {
+            "nct_id": trial_data.get("id"),
+            "title": trial_data.get("title"),
+            "status": trial_data.get("status"),
+            "phase": phase_display,
+            "source_url": trial_data.get("source_url"),
+            "llm_assessment": llm_assessment_for_frontend,
+            "action_suggestions": action_suggestions
+        }
+
+        return final_trial_output
 
     async def run(self, patient_data: Dict[str, Any] = None, prompt_details: Dict[str, Any] = None) -> Dict[str, Any]:
-        """ Executes the agent's logic: search trials, assess eligibility using TEXT LLM output. """
-        query = prompt_details.get("prompt", "") if prompt_details else ""
-        entities = prompt_details.get("entities", {}) if prompt_details else {}
-        
-        if not isinstance(patient_data, dict): 
-             logging.warning(f"Received non-dict patient_data: {type(patient_data)}. Using empty dict.")
-             patient_data = {}
-        logging.info(f"ClinicalTrialAgent running. Query: '{query}'. Patient data provided: {bool(patient_data)}")
+        """
+        Main entry point for the agent.
+        1. Takes a search query from `prompt_details`.
+        2. Performs a vector search to find relevant trials.
+        3. Fetches trial details from SQLite.
+        4. If patient data is provided, performs an LLM assessment for each trial.
+        5. Returns the found trials, with or without assessments.
+        """
+        logging.info("ClinicalTrialAgent started.")
+        query = prompt_details.get("query", "")
+        if not query:
+            return {"status": "error", "message": "No search query provided."}
 
-        # ChromaDB is optional - we can use fallback search if not available
-        if not self.chroma_collection:
-            logging.info("ChromaDB not available, using fallback search method.")
-
-        conn = None
+        conn = None # Initialize connection variable
         try:
-            # --- 1. Search for Trials --- 
-            found_nct_ids = []
+            # 1. Search for trials
+            nct_ids = self._vector_search_trials(query_text=query, n_results=15)
             
-            if self.chroma_collection:
-                # Use ChromaDB vector search
-                logging.info(f"Using ChromaDB vector search for query: {query[:50]}...")
-                results = self.chroma_collection.query(
-                    query_texts=[query],  # ChromaDB will handle embedding with the function
-                    n_results=N_CHROMA_RESULTS,
-                    include=["metadatas", "documents", "distances"]
-                )
-                
-                if results and results.get('ids') and results['ids'][0]:
-                    # Extract NCT IDs correctly from metadata
-                    if results.get('metadatas') and results['metadatas'][0]:
-                         found_nct_ids = [meta.get('nct_id') for meta in results['metadatas'][0] if meta.get('nct_id')]
-                    logging.info(f"ChromaDB found potential trial IDs: {found_nct_ids}")
-                else:
-                    logging.info("No relevant trials found in ChromaDB vector search.")
-            else:
-                # Use fallback SQLite search
-                logging.info(f"Using fallback SQLite search for query: {query[:50]}...")
-                query_text = self._build_query_text({"patient_data": patient_data}, entities, query)
-                found_nct_ids = self._fallback_search_trials(query_text or query, N_CHROMA_RESULTS)
-                logging.info(f"Fallback search found trial IDs: {found_nct_ids}")
-                
-            if not found_nct_ids:
-                logging.info("No relevant trials found in search.")
-                return {"status": "success", "output": { "found_trials": [] }, "summary": "No relevant trials found in search."}
-
-            # --- 2. Fetch Details from SQLite --- 
+            # Get DB connection here, as it's needed for fallback or details fetching
             conn = self._get_db_connection()
             if not conn:
-                 return {"status": "failure", "output": None, "summary": "Database connection failed."}
-            
-            found_trials_details = self._fetch_trial_details(conn, found_nct_ids)
-            logging.info(f"Fetched details for {len(found_trials_details)} trials from SQLite.")
-            
-            if not found_trials_details: # Handle case where IDs were found but no details in SQLite
-                logging.warning(f"NCT IDs {found_nct_ids} found in search but no details found in SQLite.")
-                return {"status": "success", "output": { "found_trials": [] }, "summary": "Trial details not found in database for search results."}
+                return {"status": "error", "message": "Could not connect to the trial database."}
 
-            # --- 3. Perform LLM Eligibility Assessment (Concurrent) --- 
-            llm_assessment_tasks = []
-            if self.llm_client and patient_data: 
-                logging.info(f"Starting concurrent LLM assessments for {len(found_trials_details)} trials...")
-                for trial_detail_row in found_trials_details: # Iterate through rows
-                    plain_trial_detail = dict(trial_detail_row) # Convert row to dict
-                    task = asyncio.create_task(
-                        self._get_llm_assessment_for_trial(patient_data, plain_trial_detail) # Pass dict
-                    )
-                    llm_assessment_tasks.append(task)
-            else:
-                logging.warning("LLM client not initialized or no patient context provided. Skipping LLM assessment.")
-
-            # --- 4. Gather LLM Results and Update Trial Details --- 
-            llm_results = []
-            if llm_assessment_tasks:
-                llm_results = await asyncio.gather(*llm_assessment_tasks)
-                logging.info(f"Completed LLM assessments processing for {len(llm_results)} tasks.")
+            # Use fallback search if vector search is unavailable or returns no results
+            if not nct_ids:
+                logging.warning("Vector search returned no results or failed. Attempting fallback search.")
+                nct_ids = self._fallback_search_trials(conn, query=query, limit=10)
             
-            # Process results and add to trial details
-            final_trials_output = [] # Build a new list of plain dicts
-            for i, trial_detail_row in enumerate(found_trials_details):
-                # Start with a fresh copy of the original trial data from SQLite
-                current_trial_output = dict(trial_detail_row) 
-
-                # Initialize interpreted_result structure for internal processing
-                interpreted_result_internal = {}
-                
-                llm_result_dict = llm_results[i] if i < len(llm_results) and llm_results[i] else None
-                
-                # Temporary storage for what will become llm_assessment
-                llm_assessment_data = {
-                    "eligibility_status": "Not Assessed (No LLM Task)",
-                    "summary": "Assessment not performed.",
-                    "met_criteria": [],
-                    "unmet_criteria": [],
-                    "unclear_criteria": ["Review criteria manually."],
+            if not nct_ids:
+                return {
+                    "status": "success", 
+                    "message": "No trials found matching your query.", 
+                    "found_trials": []
                 }
-                action_suggestions_data = []
 
-                if llm_result_dict and llm_result_dict.get("llm_eligibility_analysis"):
-                    parsed_analysis = llm_result_dict["llm_eligibility_analysis"]
-                    eligibility_assessment_nested = parsed_analysis.get("eligibility_assessment", {})
+            # 2. Fetch trial details from SQLite
+            found_trials_details = self._fetch_trial_details(conn, nct_ids)
 
-                    # Populate llm_assessment_data
-                    llm_assessment_data["eligibility_status"] = eligibility_assessment_nested.get("eligibility_summary", "Assessment Incomplete")
-                    llm_assessment_data["summary"] = parsed_analysis.get("patient_specific_summary", "Summary not generated.")
-                    
-                    def get_full_criteria_objects(key_name):
-                        criteria_obj_list = []
-                        items = eligibility_assessment_nested.get(key_name, [])
-                        if isinstance(items, list):
-                            for item_obj in items:
-                                if isinstance(item_obj, dict) and "criterion" in item_obj:
-                                    # Ensure trial_snippet is present, even if None
-                                    if "trial_snippet" not in item_obj:
-                                        item_obj["trial_snippet"] = item_obj.pop("trial_document_snippet", None) # Handle rename if old key exists
-                                    criteria_obj_list.append(item_obj)
-                                elif isinstance(item_obj, str):
-                                    logging.warning(f"Criterion item for {key_name} is a string, expected dict: {item_obj}")
-                                    criteria_obj_list.append({"criterion": item_obj, "trial_snippet": None, "reasoning": None})
-                        return criteria_obj_list
-
-                    llm_assessment_data["met_criteria"] = get_full_criteria_objects("met_criteria")
-                    llm_assessment_data["unmet_criteria"] = get_full_criteria_objects("unmet_criteria")
-                    llm_assessment_data["unclear_criteria"] = get_full_criteria_objects("unclear_criteria")
-                    
-                    try:
-                         logging.debug(f"Passing TEXT-PARSED eligibility assessment to suggester for {current_trial_output.get('nct_id')}: {json.dumps(eligibility_assessment_nested, indent=2)}")
-                         suggestions = get_action_suggestions_for_trial(
-                             eligibility_assessment=eligibility_assessment_nested,
-                             patient_context=patient_data
-                         )
-                         logging.debug(f"Received suggestions from suggester for {current_trial_output.get('nct_id')}: {suggestions}")
-                         action_suggestions_data = suggestions
-                    except Exception as suggester_err:
-                         logging.error(f"Error generating action suggestions for trial {current_trial_output.get('nct_id', 'UNKNOWN')}: {suggester_err}", exc_info=True)
-                         action_suggestions_data = []
-                
-                elif llm_result_dict: # LLM task ran but parsing might have failed or assessment was negative
-                    llm_assessment_data["eligibility_status"] = llm_result_dict.get("overall_assessment", "Assessment Status Unknown")
-                    llm_assessment_data["summary"] = llm_result_dict.get("narrative_summary", "Assessment not performed or failed.")
-                    if "failed" in llm_assessment_data["eligibility_status"].lower() or "unknown" in llm_assessment_data["eligibility_status"].lower() :
-                         llm_assessment_data["unclear_criteria"] = [{"criterion": "Assessment failed or status unknown, review criteria manually.", "trial_snippet": None, "reasoning": None}]
-                    else:
-                         llm_assessment_data["unclear_criteria"] = [{"criterion": "Review criteria manually.", "trial_snippet": None, "reasoning": None}]
-                    action_suggestions_data = []
-
-                # Add the structured llm_assessment and action_suggestions to the current_trial_output
-                current_trial_output['llm_assessment'] = llm_assessment_data
-                current_trial_output['action_suggestions'] = action_suggestions_data
-                
-                # Remove the old 'interpreted_result' if it was added implicitly or explicitly before
-                if 'interpreted_result' in current_trial_output:
-                    del current_trial_output['interpreted_result']
-
-                final_trials_output.append(current_trial_output)
-
-            # --- 5. Return Results --- 
-            logging.info(f"Agent run completed successfully. Returning {len(final_trials_output)} trials.")
-            return {
-                "status": "success", 
-                "output": { "trials_with_assessment": final_trials_output } 
-            }
+            if not found_trials_details:
+                return {
+                    "status": "success", 
+                    "message": f"Could not retrieve details for found trial IDs: {nct_ids}", 
+                    "found_trials": []
+                }
             
-        except Exception as e:
-            logging.error(f"Error in ClinicalTrialAgent run: {e}", exc_info=True)
-            # Ensure a consistent error structure is returned
-            return {"status": "error", "summary": f"An internal error occurred in the agent: {str(e)}", "output": {}}
+            # 3. Perform LLM Assessment if patient context is provided
+            if patient_data:
+                logging.info(f"Patient context provided. Performing LLM assessment for {len(found_trials_details)} trials.")
+                
+                assessment_tasks = [self.run_single_trial_analysis(trial, patient_data) for trial in found_trials_details]
+                assessed_trials = await asyncio.gather(*assessment_tasks)
+                
+                return {
+                    "status": "success",
+                    "message": f"Found and assessed {len(assessed_trials)} trials.",
+                    "trials_with_assessment": assessed_trials 
+                }
+            else:
+                # If no patient context, just return the found trials
+                logging.info("No patient context provided. Returning trial details without assessment.")
+                return {
+                    "status": "success", 
+                    "message": f"Found {len(found_trials_details)} trials.",
+                    "found_trials": found_trials_details
+                }
         finally:
+            # Ensure the connection is closed at the end of the request
             if conn:
-                try:
-                    conn.close()
-                    logging.info("SQLite connection closed in agent run.")
-                except Exception as db_close_err:
-                     logging.error(f"Error closing SQLite connection: {db_close_err}")
-    # --- End Run Method --- 
+                conn.close()
+                logging.info("SQLite connection closed at the end of agent run.")
 
 # Example Usage (for testing) - Keep commented out unless needed for direct testing
 # if __name__ == '__main__':
@@ -833,7 +744,7 @@ class ClinicalTrialAgent(AgentInterface):
 #         agent = ClinicalTrialAgent()
 #
 #         # Ensure model and DB are loaded
-#         if not agent.embedding_function or not agent.chroma_collection:
+#         if not agent.embedding_model or not agent.astra_collection:
 #              print("Agent initialization failed. Exiting.")
 #              return
 #

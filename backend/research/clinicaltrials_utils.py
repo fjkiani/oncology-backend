@@ -17,10 +17,18 @@ def parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
     status = protocol.get('statusModule', {})
     overall_status = status.get('overallStatus', 'Unknown')
     
+    # Design
+    design = protocol.get('designModule', {})
+    phases = design.get('phases', ['N/A']) # It's a list
+    
     # Description
     desc = protocol.get('descriptionModule', {})
     brief_title = desc.get('briefTitle', 'No Title Available')
     brief_summary = desc.get('briefSummary', 'No Summary Available')
+
+    # Eligibility
+    eligibility = protocol.get('eligibilityModule', {})
+    eligibility_criteria_text = eligibility.get('eligibilityCriteria', '')
 
     # Conditions
     cond = protocol.get('conditionsModule', {})
@@ -36,10 +44,12 @@ def parse_study(study: Dict[str, Any]) -> Dict[str, Any]:
         "id": nct_id,
         "title": brief_title,
         "status": overall_status,
+        "phases": phases,
         "summary": brief_summary,
         "conditions": conditions,
         "interventions": interventions,
-        "source": "ClinicalTrials.gov"
+        "source_url": f"https://clinicaltrials.gov/study/{nct_id}" if nct_id != 'N/A' else None,
+        "eligibility_criteria": eligibility_criteria_text
     }
 
 async def search_clinical_trials(criteria: Dict[str, Any], max_results: int = 10) -> List[Dict[str, Any]]:
@@ -105,6 +115,59 @@ async def search_clinical_trials(criteria: Dict[str, Any], max_results: int = 10
         return []
         
     return results
+
+async def fetch_all_trials_generator(criteria: Dict[str, Any], page_size: int = 100, max_pages: int = None):
+    """
+    Asynchronously generates pages of clinical trials from the API.
+    Handles pagination to fetch all results.
+    """
+    params = {
+        "format": "json",
+        "pageSize": page_size,
+        "countTotal": "true"
+    }
+    params.update(criteria)
+    
+    page_count = 0
+    next_page_token = None
+
+    while True:
+        if next_page_token:
+            params["pageToken"] = next_page_token
+        
+        try:
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.get(API_BASE_URL, params=params, timeout=30)
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            studies = data.get('studies', [])
+            if not studies:
+                print("No more studies found. Ending fetch.")
+                break
+                
+            parsed_studies = [parse_study(s) for s in studies]
+            yield parsed_studies # Yield a page of parsed trials
+            
+            page_count += 1
+            if max_pages and page_count >= max_pages:
+                print(f"Reached max page limit of {max_pages}.")
+                break
+
+            next_page_token = data.get('nextPageToken')
+            if not next_page_token:
+                print("No next page token. All trials fetched.")
+                break
+                
+        except requests.exceptions.RequestException as e:
+            print(f"API request failed: {e}")
+            break
+        except Exception as e:
+            print(f"An unexpected error occurred during trial fetching: {e}")
+            break
 
 # Example Usage (for testing this module directly)
 if __name__ == '__main__':
