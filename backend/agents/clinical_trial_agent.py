@@ -1,5 +1,6 @@
 """
 Agent responsible for finding relevant clinical trials.
+Refactored for Task 9: Use new database architecture with SQLite + AstraDB
 """
 
 import json
@@ -7,64 +8,53 @@ import os
 import sqlite3
 import pprint
 import logging
-import re # <-- Import re
-import asyncio # <-- Import asyncio
-from typing import Any, Dict, Optional, List, Tuple # <-- Add Tuple
-from pathlib import Path # Import Path
+import re
+import asyncio
+from typing import Any, Dict, Optional, List, Tuple
+from pathlib import Path
 
-import chromadb
+# Remove ChromaDB imports - no longer needed
 from sentence_transformers import SentenceTransformer
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig # Added for JSON output
+from google.generativeai.types import GenerationConfig
 from dotenv import load_dotenv
-from chromadb.utils import embedding_functions
 
 # Import the base class
 from backend.core.agent_interface import AgentInterface
 
-# --- NEW Imports for AstraDB and SentenceTransformer ---
-from backend.database_connections import DatabaseConnections
-# --- END NEW Imports ---
+# Updated import for new database connections
+from backend.utils.database_connections import (
+    get_sqlite_connection, 
+    get_astradb_connection, 
+    close_connection
+)
 
-# --- NEW Import --- 
+# Action suggester import
 from backend.agents.action_suggester import get_action_suggestions_for_trial
 
-# --- Configuration ---
-# Explicitly load .env from the backend directory
-# Assumes this script is in backend/agents/
+# Configuration - load environment variables
 dotenv_path = Path(__file__).parent.parent / '.env'
 load_dotenv(dotenv_path=dotenv_path)
-print(f"Attempting to load .env from: {dotenv_path}") # Add print statement
 
-# Define paths assuming the application root in the container is /app
-# and this agent is at /app/backend/agents/clinical_trial_agent.py
-
-# Path to the root of the deployed application (/app)
-APP_ROOT_IN_CONTAINER = Path(__file__).resolve().parent.parent.parent
-
-SQLITE_DB_PATH = str(APP_ROOT_IN_CONTAINER / "backend" / "data" / "clinical_trials.db")
-CHROMA_DB_PATH = str(APP_ROOT_IN_CONTAINER / "backend" / "data" / "chroma_data")
-CHROMA_COLLECTION_NAME = "clinical_trials_eligibility"
-EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2' # This seems unused if Google Embeddings are primary
-N_CHROMA_RESULTS = 10 # Number of results to fetch from ChromaDB
-# LLM Configuration
+# Configuration constants
+EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
+N_VECTOR_RESULTS = 15  # Number of results from vector search
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 LLM_MODEL_NAME = "gemini-1.5-pro"
 DEFAULT_LLM_GENERATION_CONFIG = GenerationConfig(
     temperature=0.2, 
-    max_output_tokens=8192 # Keep token limit
+    max_output_tokens=8192
 )
 
-# --- RE-ADD MISSING CONSTANT --- 
-SAFETY_SETTINGS = { # Adjust safety settings as needed
+# Safety settings for LLM
+SAFETY_SETTINGS = {
     "HARM_CATEGORY_HARASSMENT": "BLOCK_MEDIUM_AND_ABOVE",
     "HARM_CATEGORY_HATE_SPEECH": "BLOCK_MEDIUM_AND_ABOVE",
     "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_MEDIUM_AND_ABOVE",
     "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_MEDIUM_AND_ABOVE",
 }
-# --- END RE-ADD --- 
 
-# --- Structured Text Prompt --- 
+# LLM prompt template for eligibility assessment
 ELIGIBILITY_AND_NARRATIVE_SUMMARY_PROMPT_TEMPLATE = """
 Analyze the patient's eligibility for the following clinical trial based ONLY on the provided information. Provide a concise patient-specific summary, an overall eligibility status, and a breakdown of met, unmet, and unclear criteria.
 
@@ -116,30 +106,17 @@ Exclusion Criteria:
 *   Focus solely on the provided text. Do not infer information not present.
 *   Be concise and specific in your reasoning.
 """
-# --- End Structured Text Prompt --- 
 
-# --- MockTrialDatabase Class (Commented out as it's being replaced) ---
-# class MockTrialDatabase:
-#     \"\"\" Simulates querying a clinical trial database. \"\"\"
-#     def search_trials(self, condition: str, status: Optional[str] = None, phase: Optional[int] = None) -> list:
-#         \"\"\" Simulates searching for trials based on condition. \"\"\"
-#         print(f\"[MockTrialDatabase] Searching trials for condition: \'{condition}\', Status: {status}, Phase: {phase}\")
-#         # ... (rest of mock logic) ...
-#         return mock_results
 
 class ClinicalTrialAgent(AgentInterface):
-    """ Finds clinical trials relevant to a patient's condition using local DBs and LLM assessment. """
+    """Finds clinical trials relevant to a patient's condition using SQLite + AstraDB architecture."""
 
     def __init__(self):
-        """
-        Initialize the agent, including DB connections, embedding model, and LLM client.
-        """
-        self.db_manager = DatabaseConnections()
+        """Initialize the agent with new database connections and embedding model."""
         self.embedding_model = None
         self.llm_client = None
-        self.astra_collection = None
-
-        # --- Initialize Sentence Transformer for Embeddings ---
+        
+        # Initialize Sentence Transformer for embeddings
         try:
             logging.info(f"Initializing embedding model: {EMBEDDING_MODEL_NAME}")
             self.embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
@@ -147,7 +124,7 @@ class ClinicalTrialAgent(AgentInterface):
         except Exception as e:
             logging.error(f"Failed to initialize SentenceTransformer model: {e}", exc_info=True)
 
-        # --- Initialize Google Generative AI Client for Assessments ---
+        # Initialize Google Generative AI client
         if not GOOGLE_API_KEY:
             logging.error("GOOGLE_API_KEY not found in environment variables. LLM assessment features will be disabled.")
         else:
@@ -161,21 +138,8 @@ class ClinicalTrialAgent(AgentInterface):
                 logging.info("Google Generative AI client initialized successfully.")
             except Exception as e:
                 logging.error(f"Failed to initialize Google Generative AI client: {e}", exc_info=True)
-
-        # --- Initialize AstraDB Connection ---
-        try:
-            logging.info("Initializing AstraDB connection via DBManager...")
-            # The collection name here should match the one in the loading script
-            self.astra_collection = self.db_manager.get_vector_db_collection("clinical_trials")
-            if self.astra_collection:
-                logging.info("AstraDB collection 'clinical_trials' loaded successfully.")
-            else:
-                logging.warning("Failed to load AstraDB collection. Vector search will be unavailable.")
-        except Exception as e:
-            logging.error(f"General failure during AstraDB connection initialization: {e}", exc_info=True)
-            self.astra_collection = None
         
-        logging.info("ClinicalTrialAgent Initialized.")
+        logging.info("ClinicalTrialAgent initialized with new database architecture.")
 
     @property
     def name(self) -> str:
@@ -183,73 +147,364 @@ class ClinicalTrialAgent(AgentInterface):
 
     @property
     def description(self) -> str:
-        return "Searches for relevant clinical trials based on patient diagnosis, eligibility context, stage, biomarkers, etc. using local vector and relational databases."
-
-    def _get_db_connection(self):
-        """ Establishes a connection to the SQLite database using the DBManager. """
-        try:
-            conn = self.db_manager.get_sqlite_connection()
-            if conn:
-                logging.info(f"Connected to SQLite DB via DBManager.")
-            else:
-                logging.error("Failed to get SQLite DB connection from DBManager.")
-            return conn
-        except Exception as e:
-            logging.error(f"Error getting SQLite connection from DBManager: {e}")
-            return None
+        return "Searches for relevant clinical trials based on patient diagnosis, eligibility context, stage, biomarkers, etc. using SQLite and AstraDB databases."
 
     def _build_query_text(self, context: Dict[str, Any], entities: Dict[str, Any], prompt: str) -> str:
-        """ Constructs the text to be embedded for searching based on available info. """
-        patient_data = context.get("patient_data", {})
-        primary_diagnosis = patient_data.get("diagnosis", {}).get("primary")
-        stage = patient_data.get("diagnosis", {}).get("stage")
-        biomarkers = patient_data.get("biomarkers", []) # Assuming biomarkers is a list
-        prior_treatments = patient_data.get("prior_treatments", []) # Assuming treatments is a list
+        """Constructs the text to be embedded for searching based on available info."""
+        patient_data = context.get("patient_data") or {}
+        primary_diagnosis = patient_data.get("diagnosis", {}).get("primary") if patient_data else None
+        stage = patient_data.get("diagnosis", {}).get("stage") if patient_data else None
+        biomarkers = patient_data.get("biomarkers", []) if patient_data else []
+        prior_treatments = patient_data.get("prior_treatments", []) if patient_data else []
 
         # Use specific entities if available
         condition = entities.get("condition", entities.get("specific_condition"))
         phase = entities.get("trial_phase")
         status = entities.get("recruitment_status")
 
-        # Construct query string - prioritize explicit query terms
+        # Construct query string
         parts = []
         if condition:
             parts.append(f"Condition: {condition}")
         elif primary_diagnosis:
-             parts.append(f"Condition: {primary_diagnosis}")
+            parts.append(f"Condition: {primary_diagnosis}")
 
-        if stage: parts.append(f"Stage: {stage}")
-        if phase: parts.append(f"Phase: {phase}")
-        if status: parts.append(f"Status: {status}")
-        if biomarkers: parts.append(f"Biomarkers: {', '.join(biomarkers)}")
-        if prior_treatments: parts.append(f"Prior Treatments: {', '.join(pt.get('name', '') for pt in prior_treatments if pt.get('name'))}")
+        if stage: 
+            parts.append(f"Stage: {stage}")
+        if phase: 
+            parts.append(f"Phase: {phase}")
+        if status: 
+            parts.append(f"Status: {status}")
+        if biomarkers: 
+            parts.append(f"Biomarkers: {', '.join(biomarkers)}")
+        if prior_treatments: 
+            parts.append(f"Prior Treatments: {', '.join(pt.get('name', '') for pt in prior_treatments if pt.get('name'))}")
 
-        # If specific parts identified, use them primarily
         if parts:
-             query_text = ". ".join(parts)
-             logging.info(f"Using constructed query text: {query_text}")
-             return query_text
-        # Fallback to using the original prompt if no structured data found
+            query_text = ". ".join(parts)
+            logging.info(f"Using constructed query text: {query_text}")
+            return query_text
         elif prompt:
-             logging.info(f"Using original prompt for query text: {prompt}")
-             return prompt
-        # Final fallback if prompt is also empty
+            logging.info(f"Using original prompt for query text: {prompt}")
+            return prompt
         else:
-             logging.warning("No suitable query text could be constructed.")
-             return ""
+            logging.warning("No suitable query text could be constructed.")
+            return ""
 
-    # --- Refined LLM Helper - Calls NEW Text Parser --- 
-    async def _get_llm_assessment_for_trial(self, patient_context: Dict[str, Any], trial_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Generates prompt, calls LLM for STRUCTURED TEXT, parses text response for a single trial."""
-        nct_id = trial_detail.get("id", "UNKNOWN_ID")
-        logging.info(f"Starting LLM assessment (structured text) for trial {nct_id}...")
+    def _vector_search_trials(self, query_text: str, n_results: int = N_VECTOR_RESULTS) -> List[str]:
+        """
+        Performs vector search in AstraDB to find relevant trial NCT IDs.
+        Uses the new database architecture.
+        """
+        if not self.embedding_model:
+            logging.error("Embedding model is not available. Cannot perform vector search.")
+            return []
+            
+        if not query_text:
+            logging.warning("Query text is empty. Skipping vector search.")
+            return []
+
+        try:
+            logging.info(f"Performing vector search in AstraDB with query: '{query_text}'")
+            
+            # Get AstraDB connection using new database connections
+            astra_db = get_astradb_connection()
+            collection = astra_db.get_collection("trial_vectors")
+            
+            # Generate query embedding
+            query_embedding = self.embedding_model.encode(query_text).tolist()
+            
+            # Perform vector similarity search
+            results = collection.find(
+                sort={"$vector": query_embedding},
+                limit=n_results,
+                projection={"_id": 1}  # Only need the NCT ID
+            )
+
+            documents = list(results)
+            if not documents:
+                logging.info("AstraDB vector search returned no documents.")
+                return []
+            
+            # Extract NCT IDs (stored in _id field)
+            nct_ids = [doc["_id"] for doc in documents if "_id" in doc]
+            
+            logging.info(f"AstraDB vector search found {len(nct_ids)} trials: {nct_ids[:5]}...")
+            return nct_ids
+
+        except Exception as e:
+            logging.error(f"AstraDB vector search failed: {e}", exc_info=True)
+            return []
+
+    def _fallback_search_trials(self, query: str, limit: int = 10) -> List[str]:
+        """
+        Fallback search method that searches SQLite directly using new schema.
+        """
+        try:
+            connection = get_sqlite_connection()
+            cursor = connection.cursor()
+            
+            # Search in title, brief_summary, and eligibility_criteria using new schema
+            search_query = """
+            SELECT nct_id FROM trials 
+            WHERE title LIKE ? OR brief_summary LIKE ? OR eligibility_criteria LIKE ?
+            LIMIT ?
+            """
+            
+            search_term = f"%{query}%"
+            logging.info(f"Fallback SQLite search using query: '{query}' on new schema columns")
+            cursor.execute(search_query, (search_term, search_term, search_term, limit))
+            results = cursor.fetchall()
+            
+            nct_ids = [row[0] for row in results]
+            logging.info(f"Fallback search found {len(nct_ids)} trials matching '{query}'")
+            
+            close_connection(connection)
+            return nct_ids
+            
+        except Exception as e:
+            logging.error(f"Fallback search failed: {e}", exc_info=True)
+            return []
+
+    def _fetch_trial_details(self, nct_ids: List[str]) -> List[Dict[str, Any]]:
+        """
+        Fetches full trial details from SQLite for given NCT IDs using new schema.
+        """
+        if not nct_ids:
+            return []
+            
+        try:
+            connection = get_sqlite_connection()
+            cursor = connection.cursor()
+            
+            placeholders = ','.join('?' * len(nct_ids))
+            # Use new schema column names
+            query = f"""
+            SELECT nct_id, title, status, phase, study_type, conditions, locations,
+                   brief_summary, detailed_description, eligibility_criteria,
+                   sponsor, enrollment_count, last_updated_date
+            FROM trials 
+            WHERE nct_id IN ({placeholders})
+            """
+            
+            cursor.execute(query, nct_ids)
+            rows = cursor.fetchall()
+            
+            # Convert to dictionaries with proper column names
+            results = []
+            for row in rows:
+                trial_dict = {
+                    "id": row[0],  # nct_id
+                    "nct_id": row[0],  # Keep both for compatibility
+                    "title": row[1],
+                    "status": row[2],
+                    "phase": row[3],
+                    "study_type": row[4],
+                    "conditions": row[5],
+                    "locations": row[6],
+                    "brief_summary": row[7],
+                    "detailed_description": row[8],
+                    "eligibility_criteria": row[9],
+                    "sponsor": row[10],
+                    "enrollment_count": row[11],
+                    "last_updated_date": row[12],
+                    # Parse phases for compatibility with existing code
+                    "phases": [row[3]] if row[3] else [],
+                    # Add inclusion/exclusion criteria split for LLM assessment
+                    "inclusion_criteria": self._extract_inclusion_criteria(row[9]),
+                    "exclusion_criteria": self._extract_exclusion_criteria(row[9])
+                }
+                results.append(trial_dict)
+            
+            close_connection(connection)
+            return results
+            
+        except Exception as e:
+            logging.error(f"Error fetching trial details: {e}", exc_info=True)
+            return []
+
+    def _extract_inclusion_criteria(self, eligibility_criteria: str) -> str:
+        """
+        Extract inclusion criteria from the full eligibility criteria text.
+        This is a simple implementation - could be enhanced with more sophisticated parsing.
+        """
+        if not eligibility_criteria:
+            return ""
         
-        inclusion_criteria = trial_detail.get('inclusion_criteria', None) 
-        exclusion_criteria = trial_detail.get('exclusion_criteria', None) 
+        # Look for inclusion/exclusion section markers
+        text = eligibility_criteria.lower()
+        
+        # Find inclusion section
+        inclusion_markers = ["inclusion criteria:", "inclusion:", "included:"]
+        exclusion_markers = ["exclusion criteria:", "exclusion:", "excluded:"]
+        
+        inclusion_start = -1
+        for marker in inclusion_markers:
+            pos = text.find(marker)
+            if pos != -1:
+                inclusion_start = pos + len(marker)
+                break
+        
+        if inclusion_start == -1:
+            # If no explicit inclusion section, return first half
+            return eligibility_criteria[:len(eligibility_criteria)//2]
+        
+        # Find where inclusion section ends (exclusion starts)
+        inclusion_end = len(eligibility_criteria)
+        for marker in exclusion_markers:
+            pos = text.find(marker, inclusion_start)
+            if pos != -1:
+                inclusion_end = pos
+                break
+        
+        return eligibility_criteria[inclusion_start:inclusion_end].strip()
+
+    def _extract_exclusion_criteria(self, eligibility_criteria: str) -> str:
+        """
+        Extract exclusion criteria from the full eligibility criteria text.
+        """
+        if not eligibility_criteria:
+            return ""
+        
+        text = eligibility_criteria.lower()
+        exclusion_markers = ["exclusion criteria:", "exclusion:", "excluded:"]
+        
+        for marker in exclusion_markers:
+            pos = text.find(marker)
+            if pos != -1:
+                return eligibility_criteria[pos + len(marker):].strip()
+        
+        # If no explicit exclusion section, return second half
+        return eligibility_criteria[len(eligibility_criteria)//2:]
+
+    def _create_eligibility_prompt(self, patient_context: Dict[str, Any], trial_title: str, 
+                                 trial_status: str, trial_phase: str, inclusion_criteria: Optional[str], 
+                                 exclusion_criteria: Optional[str]) -> str:
+        """Creates the prompt for LLM eligibility assessment."""
+        try:
+            patient_profile_json = json.dumps(patient_context, indent=2)
+        except TypeError as e:
+            logging.error(f"Patient context is not JSON serializable: {e}. Using string representation.")
+            patient_profile_json = str(patient_context)
+            
+        prompt = ELIGIBILITY_AND_NARRATIVE_SUMMARY_PROMPT_TEMPLATE.format(
+            patient_profile_json=patient_profile_json,
+            trial_title=trial_title,
+            trial_status=trial_status,
+            trial_phase=trial_phase,
+            inclusion_criteria=inclusion_criteria or "(Not provided)",
+            exclusion_criteria=exclusion_criteria or "(Not provided)"
+        )
+        return prompt
+
+    def _parse_structured_text_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+        """Parses the structured plain text response from the LLM."""
+        if not response_text:
+            logging.warning("LLM structured text response is empty.")
+            return None
+
+        try:
+            # Define section markers
+            markers = {
+                "SUMMARY": "== SUMMARY ==",
+                "ELIGIBILITY": "== ELIGIBILITY ==",
+                "MET": "== MET CRITERIA ==",
+                "UNMET": "== UNMET CRITERIA ==",
+                "UNCLEAR": "== UNCLEAR CRITERIA =="
+            }
+            
+            def extract_section(text, start_marker, all_markers):
+                start_idx = text.find(start_marker)
+                if start_idx == -1:
+                    return ""
+                
+                start_idx += len(start_marker)
+                
+                # Find the start of the next marker
+                end_idx = len(text)
+                for marker_value in all_markers.values():
+                    next_marker_idx = text.find(marker_value, start_idx)
+                    if next_marker_idx != -1:
+                        end_idx = min(end_idx, next_marker_idx)
+                         
+                return text[start_idx:end_idx].strip()
+
+            # Extract sections
+            summary_text = extract_section(response_text, markers["SUMMARY"], markers)
+            eligibility_text = extract_section(response_text, markers["ELIGIBILITY"], markers)
+            met_text = extract_section(response_text, markers["MET"], markers)
+            unmet_text = extract_section(response_text, markers["UNMET"], markers)
+            unclear_text = extract_section(response_text, markers["UNCLEAR"], markers)
+            
+            def parse_criteria_list(section_text, has_reasoning=False):
+                items = []
+                if not section_text or section_text.lower().strip() == 'none':
+                    return items
+                 
+                lines = section_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if line.startswith('* '):
+                        content_after_bullet = line[2:].strip()
+                         
+                        criterion_text = content_after_bullet
+                        trial_snippet = None 
+                        reasoning_text = None
+
+                        # Extract trial snippet
+                        snippet_pattern = r' - TRIAL_SNIPPET: (["](?:\\.|[^"])*["]|\'(?:\\.|[^\'])*\')'
+                        snippet_match = re.search(snippet_pattern, content_after_bullet)
+
+                        if snippet_match:
+                            trial_snippet_with_quotes = snippet_match.group(1)
+                            trial_snippet = trial_snippet_with_quotes.strip("\'\"")
+                            
+                            criterion_text = content_after_bullet[:snippet_match.start()].strip()
+                            remaining_text = content_after_bullet[snippet_match.end():].strip()
+                            
+                            if has_reasoning and remaining_text.startswith('- Reasoning:'):
+                                reasoning_text = remaining_text[len('- Reasoning:'):].strip()
+
+                        items.append({
+                            "criterion": criterion_text,
+                            "trial_snippet": trial_snippet,
+                            "reasoning": reasoning_text
+                        })
+                return items
+
+            # Parse criteria lists
+            met_criteria = parse_criteria_list(met_text, has_reasoning=False)
+            unmet_criteria = parse_criteria_list(unmet_text, has_reasoning=True)
+            unclear_criteria = parse_criteria_list(unclear_text, has_reasoning=True)
+            
+            # Construct result dictionary
+            result_dict = {
+                "patient_specific_summary": summary_text,
+                "eligibility_assessment": {
+                    "eligibility_summary": eligibility_text,
+                    "met_criteria": met_criteria,
+                    "unmet_criteria": unmet_criteria,
+                    "unclear_criteria": unclear_criteria
+                }
+            }
+            
+            return result_dict
+
+        except Exception as e:
+            logging.error(f"Error parsing structured text response: {e}", exc_info=True)
+            return None
+
+    async def _get_llm_assessment_for_trial(self, patient_context: Dict[str, Any], 
+                                          trial_detail: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Generates LLM assessment for a single trial."""
+        nct_id = trial_detail.get("id", "UNKNOWN_ID")
+        logging.info(f"Starting LLM assessment for trial {nct_id}...")
+        
+        inclusion_criteria = trial_detail.get('inclusion_criteria')
+        exclusion_criteria = trial_detail.get('exclusion_criteria')
 
         if not inclusion_criteria and not exclusion_criteria:
             logging.warning(f"No criteria text found for trial {nct_id}, skipping LLM assessment.")
-            # Return structure indicating skip
             return {
                 "llm_eligibility_analysis": None,
                 "overall_assessment": "Not Assessed (No Criteria Text)", 
@@ -267,14 +522,13 @@ class ClinicalTrialAgent(AgentInterface):
         try:
             prompt = self._create_eligibility_prompt(
                 patient_context, 
-                trial_detail.get('title','N/A'), 
-                trial_detail.get('status','N/A'), 
-                trial_detail.get('phases','N/A'), 
+                trial_detail.get('title', 'N/A'), 
+                trial_detail.get('status', 'N/A'), 
+                trial_detail.get('phase', 'N/A'), 
                 inclusion_criteria, 
                 exclusion_criteria
             ) 
             
-            # Use the default config (expects plain text now)
             response = await asyncio.to_thread(
                 self.llm_client.generate_content,
                 prompt,
@@ -282,7 +536,7 @@ class ClinicalTrialAgent(AgentInterface):
                 safety_settings=SAFETY_SETTINGS
             )
             
-            # --- Get raw response text --- 
+            # Extract response text
             raw_response_text = ""
             try: 
                 if response.parts:
@@ -290,344 +544,48 @@ class ClinicalTrialAgent(AgentInterface):
                 else:
                     raw_response_text = response.text
             except Exception as e:
-                 # ... (keep robust text retrieval error handling) ...
-                 logging.warning(f"Could not access response parts/text directly for {nct_id}: {e}")
-                 try:
-                      raw_response_text = response.text 
-                 except AttributeError:
-                       logging.error(f"Response object for {nct_id} has no 'text' or 'parts' attribute.", exc_info=True)
-                       raw_response_text = "Error: Response object structure invalid."
-                 except Exception as e2:
-                      logging.error(f"Failed even getting response.text for {nct_id}: {e2}")
-                      raw_response_text = "Error retrieving response text."
-            # --- End response text extraction ---
+                logging.warning(f"Could not access response parts/text for {nct_id}: {e}")
+                try:
+                    raw_response_text = response.text 
+                except:
+                    raw_response_text = "Error retrieving response text."
             
-            logging.debug(f"Raw LLM TEXT response for {nct_id}:\n{raw_response_text}")
+            logging.debug(f"Raw LLM response for {nct_id}:\n{raw_response_text}")
 
-            # --- Call NEW Structured Text Parser --- 
+            # Parse structured text response
             parsed_assessment_dict = self._parse_structured_text_response(raw_response_text)
 
             if parsed_assessment_dict:
-                logging.info(f"Successfully parsed structured text assessment for trial {nct_id}.")
-                # The parser should return the dict in the expected nested format
+                logging.info(f"Successfully parsed assessment for trial {nct_id}.")
                 return {"llm_eligibility_analysis": parsed_assessment_dict} 
             else:
-                logging.warning(f"Failed to parse structured text assessment for trial {nct_id}. Raw text logged.")
-                return { # Return specific structure for parsing failure
+                logging.warning(f"Failed to parse assessment for trial {nct_id}.")
+                return { 
                     "llm_eligibility_analysis": None,
                     "overall_assessment": "Assessment Failed (Text Parsing Error)",
-                    "narrative_summary": f"The AI assessment could not be processed from text. Raw response logged."
+                    "narrative_summary": "The AI assessment could not be processed."
                 }
 
         except Exception as e:
-            logging.error(f"Error during LLM API call for trial {nct_id}: {e}", exc_info=True)
-            return { # Return specific structure for API call failure
+            logging.error(f"Error during LLM assessment for trial {nct_id}: {e}", exc_info=True)
+            return { 
                 "llm_eligibility_analysis": None,
                 "overall_assessment": "Assessment Failed (API Error)",
                 "narrative_summary": f"An error occurred communicating with the AI: {e}"
             }
-    # --- End Refined LLM Helper --- 
 
-    def _fetch_trial_details(self, conn: sqlite3.Connection, nct_ids: List[str]) -> List[Dict[str, Any]]:
-        """Fetches full trial details from SQLite for given NCT IDs."""
-        if not nct_ids:
-            return []
-        try:
-            conn.row_factory = sqlite3.Row # Return rows as dict-like objects
-            cursor = conn.cursor()
-            placeholders = ','.join('?' * len(nct_ids))
-            # Select all columns needed by the frontend/LLM
-            query = f"SELECT * FROM trials WHERE id IN ({placeholders})"
-            cursor.execute(query, nct_ids)
-            rows = cursor.fetchall()
-            # Convert rows to dictionaries
-            results = [dict(row) for row in rows]
-            
-            # Reorder results to match the input nct_ids order if needed (or handle later)
-            # For simplicity now, return as fetched
-            return results
-        except sqlite3.Error as e:
-            logging.error(f"SQLite error fetching trial details: {e}", exc_info=True)
-            return []
-        except Exception as e:
-            logging.error(f"Unexpected error fetching trial details: {e}", exc_info=True)
-            return []
-
-    def _fallback_search_trials(self, conn: sqlite3.Connection, query: str, limit: int = 10) -> List[str]:
-        """
-        Fallback search method that searches SQLite directly.
-        Uses the provided database connection.
-        """
-        try:
-            if not conn:
-                logging.error("Fallback search received no database connection.")
-                return []
-            
-            conn.row_factory = sqlite3.Row # Set row_factory for dict-like access
-            cursor = conn.cursor()
-            
-            # Search in title, summary, and criteria for the query term
-            search_query = """
-            SELECT id FROM trials 
-            WHERE title LIKE ? OR summary LIKE ? OR inclusion_criteria LIKE ? OR exclusion_criteria LIKE ?
-            LIMIT ?
-            """
-            
-            search_term = f"%{query}%"
-            logging.info(f"Fallback SQLite search using query: '{query}' on columns: title, summary, inclusion_criteria, exclusion_criteria")
-            cursor.execute(search_query, (search_term, search_term, search_term, search_term, limit))
-            results = cursor.fetchall()
-            
-            nct_ids = [row['id'] for row in results]
-            logging.info(f"Fallback search found {len(nct_ids)} trials matching '{query}'")
-            return nct_ids
-            
-        except Exception as e:
-            logging.error(f"Fallback search failed: {e}", exc_info=True)
-            return []
-
-    def _vector_search_trials(self, query_text: str, n_results: int = 15) -> List[str]:
-        """
-        Performs a vector search in AstraDB to find relevant trial NCT IDs.
-        """
-        if not self.astra_collection:
-            logging.error("AstraDB collection is not available. Cannot perform vector search.")
-            return []
-        
-        if not self.embedding_model:
-            logging.error("Embedding model is not available. Cannot perform vector search.")
-            return []
-            
-        if not query_text:
-            logging.warning("Query text is empty. Skipping vector search.")
-            return []
-
-        try:
-            logging.info(f"Performing vector search in AstraDB with query: '{query_text}'")
-            
-            query_embedding = self.embedding_model.encode(query_text).tolist()
-            
-            results = self.astra_collection.find(
-                sort={"$vector": query_embedding},
-                limit=n_results,
-                projection={"nct_id": 1} # Only need the ID
-            )
-
-            documents = list(results)
-            if not documents:
-                logging.info("AstraDB vector search returned no documents.")
-                return []
-            
-            nct_ids = list(set([doc['nct_id'] for doc in documents if 'nct_id' in doc]))
-            
-            logging.info(f"AstraDB vector search found {len(nct_ids)} unique trials: {nct_ids}")
-            return nct_ids
-
-        except Exception as e:
-            logging.error(f"AstraDB vector search failed: {e}", exc_info=True)
-            return []
-
-    # --- NEW: Prompt Generation Method --- 
-    def _create_eligibility_prompt(self, patient_context: Dict[str, Any], trial_title: str, trial_status: str, trial_phase: str, inclusion_criteria: Optional[str], exclusion_criteria: Optional[str]) -> str:
-        """Creates the prompt for the LLM to assess eligibility and summarize using structured text, handling potentially missing criteria text."""
-        # Basic formatting for patient context
-        # --- FIX: Use json.dumps for reliable formatting --- 
-        try:
-            patient_profile_json = json.dumps(patient_context, indent=2)
-        except TypeError as e:
-            logging.error(f"Patient context is not JSON serializable: {e}. Using basic string representation.")
-            patient_profile_json = str(patient_context)
-        # --- END FIX --- 
-            
-        # --- FIX: Format with all arguments for the structured text prompt --- 
-        prompt = ELIGIBILITY_AND_NARRATIVE_SUMMARY_PROMPT_TEMPLATE.format(
-             patient_profile_json=patient_profile_json,
-             trial_title=trial_title,             # Use argument
-             trial_status=trial_status,           # Use argument
-             trial_phase=json.dumps(trial_phase),             # Use argument, ensure it's a string
-             inclusion_criteria=inclusion_criteria or "(Not provided or not found in source document)",
-             exclusion_criteria=exclusion_criteria or "(Not provided or not found in source document)"
-         )
-        # --- END FIX ---
-        return prompt
-    # --- END NEW: Prompt Generation Method ---
-
-    # --- NEW: Manual Structured Text Parser --- 
-    def _parse_structured_text_response(self, response_text: str) -> Optional[Dict[str, Any]]:
-        """Parses the structured plain text response from the LLM."""
-        if not response_text:
-            logging.warning("LLM structured text response is empty.")
-            return None
-
-        try:
-            summary = ""
-            eligibility_summary = ""
-            met_criteria = []
-            unmet_criteria = []
-            unclear_criteria = []
-
-            # Define markers
-            markers = {
-                "SUMMARY": "== SUMMARY ==",
-                "ELIGIBILITY": "== ELIGIBILITY ==",
-                "MET": "== MET CRITERIA ==",
-                "UNMET": "== UNMET CRITERIA ==",
-                "UNCLEAR": "== UNCLEAR CRITERIA =="
-            }
-            
-            # --- Helper to extract text between markers --- 
-            def extract_section(text, start_marker, all_markers):
-                start_idx = text.find(start_marker)
-                if start_idx == -1:
-                    return "" # Marker not found
-                
-                start_idx += len(start_marker) # Move past the marker itself
-                
-                # Find the start of the *next* marker
-                end_idx = len(text) # Default to end of text
-                for marker_value in all_markers.values():
-                    next_marker_idx = text.find(marker_value, start_idx)
-                    if next_marker_idx != -1:
-                         end_idx = min(end_idx, next_marker_idx)
-                         
-                return text[start_idx:end_idx].strip()
-            # --- End Helper --- 
-
-            # Extract sections
-            summary_text = extract_section(response_text, markers["SUMMARY"], markers)
-            eligibility_text = extract_section(response_text, markers["ELIGIBILITY"], markers)
-            met_text = extract_section(response_text, markers["MET"], markers)
-            unmet_text = extract_section(response_text, markers["UNMET"], markers)
-            unclear_text = extract_section(response_text, markers["UNCLEAR"], markers)
-            
-            # Assign simple text sections
-            summary = summary_text
-            eligibility_summary = eligibility_text
-            
-            # --- Helper to parse bulleted list section --- 
-            def parse_criteria_list(section_text, has_reasoning=False):
-                items = []
-                if not section_text or section_text.lower().strip() == 'none':
-                     return items
-                 
-                lines = section_text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line.startswith('* '):
-                         content_after_bullet = line[2:].strip()
-                         
-                         criterion_text = content_after_bullet
-                         trial_snippet_to_assign = None 
-                         reasoning_text = None
-
-                         # Regex to find snippet like: - TRIAL_SNIPPET: "..." or - TRIAL_SNIPPET: '...'
-                         # Simpler regex to avoid escaping issues with the toolchain
-                         snippet_pattern = r' - TRIAL_SNIPPET: (["](?:\\.|[^"])*["]|\'(?:\\.|[^\'])*\')'
-                         snippet_match = re.search(snippet_pattern, content_after_bullet)
-
-                         if snippet_match:
-                             trial_snippet_with_quotes = snippet_match.group(1)
-                             trial_snippet_to_assign = trial_snippet_with_quotes.strip("\'\"") # Strip both single and double quotes
-                            
-                             criterion_text = content_after_bullet[:snippet_match.start()].strip()
-                             remaining_text = content_after_bullet[snippet_match.end():].strip()
-                            
-                             if has_reasoning and remaining_text.startswith('- Reasoning:'):
-                                 reasoning_text = remaining_text[len('- Reasoning:'):].strip()
-                             elif has_reasoning and remaining_text:
-                                 logging.warning(f"Expected reasoning after TRIAL_SNIPPET but marker not found: {remaining_text} in line: {line}")
-                                 reasoning_text = remaining_text 
-                        
-                         elif has_reasoning:
-                             parts = re.split(r'\\s+-\\s+Reasoning:\\s+', content_after_bullet, maxsplit=1)
-                             if len(parts) == 2:
-                                  criterion_text = parts[0].strip()
-                                  reasoning_text = parts[1].strip()
-                             else:
-                                  criterion_text = content_after_bullet
-                                  logging.warning(f"Could not parse reasoning (TRIAL_SNIPPET not found) from: {line}")
-                         else: 
-                             criterion_text = content_after_bullet
-
-                         items.append({
-                             "criterion": criterion_text,
-                             "trial_snippet": trial_snippet_to_assign,
-                             "reasoning": reasoning_text
-                         })
-                return items
-            # --- End Helper --- 
-
-            # Parse criteria lists
-            met_criteria = parse_criteria_list(met_text, has_reasoning=False)
-            unmet_criteria = parse_criteria_list(unmet_text, has_reasoning=True)
-            unclear_criteria = parse_criteria_list(unclear_text, has_reasoning=True)
-            
-            # --- Re-categorize MET criteria if snippet is "N/A" or missing --- 
-            newly_unclear_from_met = []
-            remaining_met_criteria = []
-            for criterion_obj in met_criteria:
-                snippet = criterion_obj.get("trial_snippet")
-                
-                # Alternative snippet cleaning
-                cleaned_snippet = None
-                if snippet is not None:
-                    cleaned_snippet = str(snippet).replace('"', '').replace("'", "")
-                
-                if not cleaned_snippet or cleaned_snippet.upper() == "N/A": # Case-insensitive check for N/A
-                    # Preserve existing reasoning if any, otherwise add default
-                    existing_reasoning = criterion_obj.get("reasoning")
-                    criterion_obj["reasoning"] = existing_reasoning if existing_reasoning else "LLM reported N/A for trial snippet or snippet was missing/empty, making status unclear."
-                    newly_unclear_from_met.append(criterion_obj)
-                else:
-                    # If snippet is not "N/A" and not empty, put the cleaned version back
-                    criterion_obj["trial_snippet"] = cleaned_snippet 
-                    remaining_met_criteria.append(criterion_obj)
-            
-            met_criteria = remaining_met_criteria
-            unclear_criteria.extend(newly_unclear_from_met)
-            # --- End re-categorization --- 
-
-            # --- Construct the final dictionary in the expected nested format --- 
-            result_dict = {
-                "patient_specific_summary": summary,
-                "eligibility_assessment": {
-                    "eligibility_summary": eligibility_summary,
-                    "met_criteria": met_criteria,
-                    "unmet_criteria": unmet_criteria,
-                    "unclear_criteria": unclear_criteria
-                }
-            }
-            
-            # Basic validation: Check if essential parts were extracted
-            if not summary or not eligibility_summary:
-                 logging.warning("Manual text parsing failed to extract summary or eligibility status.")
-                 # Optionally return None or the partial dict depending on desired strictness
-                 # return None 
-                 
-            # --- Log the final constructed dictionary --- 
-            logging.debug(f"Constructed dict from text parser: {json.dumps(result_dict, indent=2)}")
-            # --- End Log --- 
-            return result_dict
-
-        except Exception as e:
-            logging.error(f"Error parsing structured text response: {e}\nRaw text was:\n{response_text[:1000]}...", exc_info=True)
-            return None # Or raise, or return a specific error structure
-    # --- End Manual Structured Text Parser --- 
-
-    # --- NEW: Method to run analysis on a SINGLE trial object --- 
-    async def run_single_trial_analysis(self, trial_data: Dict[str, Any], patient_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_single_trial_analysis(self, trial_data: Dict[str, Any], 
+                                      patient_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Runs the full analysis pipeline for a single trial: LLM assessment and action suggestions.
-        Returns a dictionary combining original trial data with analysis results,
-        formatted for the frontend.
         """
         nct_id = trial_data.get("id", "UNKNOWN_ID")
         logging.info(f"Running single trial analysis for {nct_id}")
         
-        # 1. Get LLM Assessment
+        # Get LLM Assessment
         llm_assessment_result = await self._get_llm_assessment_for_trial(patient_data, trial_data)
         
-        # 2. Get Action Suggestions and Format LLM Assessment
+        # Get Action Suggestions
         parsed_analysis = {}
         if llm_assessment_result and llm_assessment_result.get("llm_eligibility_analysis"):
             parsed_analysis = llm_assessment_result["llm_eligibility_analysis"]
@@ -638,7 +596,7 @@ class ClinicalTrialAgent(AgentInterface):
             patient_context=patient_data
         )
         
-        # Create the llm_assessment object in the structure the frontend expects
+        # Format for frontend
         llm_assessment_for_frontend = {
             "summary": parsed_analysis.get("patient_specific_summary", "Summary not available."),
             "eligibility_status": eligibility_assessment.get("eligibility_summary", "Not Assessed"),
@@ -647,50 +605,51 @@ class ClinicalTrialAgent(AgentInterface):
             "unclear_criteria": eligibility_assessment.get("unclear_criteria", [])
         }
 
-        # 3. Transform and combine results for the frontend
-        phases_list = json.loads(trial_data.get("phases", "[]"))
-        phase_display = phases_list[0] if phases_list else "N/A"
+        # Format final output
+        phases_list = trial_data.get("phases", [])
+        phase_display = phases_list[0] if phases_list else trial_data.get("phase", "N/A")
 
         final_trial_output = {
             "nct_id": trial_data.get("id"),
             "title": trial_data.get("title"),
             "status": trial_data.get("status"),
             "phase": phase_display,
-            "source_url": trial_data.get("source_url"),
+            "source_url": f"https://clinicaltrials.gov/ct2/show/{trial_data.get('id')}",
             "llm_assessment": llm_assessment_for_frontend,
             "action_suggestions": action_suggestions
         }
 
         return final_trial_output
 
-    async def run(self, patient_data: Dict[str, Any] = None, prompt_details: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def run(self, patient_data: Dict[str, Any] = None, 
+                 prompt_details: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Main entry point for the agent.
-        1. Takes a search query from `prompt_details`.
-        2. Performs a vector search to find relevant trials.
-        3. Fetches trial details from SQLite.
-        4. If patient data is provided, performs an LLM assessment for each trial.
-        5. Returns the found trials, with or without assessments.
+        Main entry point for the agent using new database architecture.
         """
-        logging.info("ClinicalTrialAgent started.")
-        query = prompt_details.get("query", "")
+        logging.info("ClinicalTrialAgent started with new database architecture.")
+        
+        # Extract query from prompt_details
+        query = ""
+        entities = {}
+        if prompt_details:
+            query = prompt_details.get("query", "")
+            entities = prompt_details.get("entities", {})
+        
         if not query:
             return {"status": "error", "message": "No search query provided."}
 
-        conn = None # Initialize connection variable
         try:
-            # 1. Search for trials
-            nct_ids = self._vector_search_trials(query_text=query, n_results=15)
+            # Build search query text
+            context = {"patient_data": patient_data} if patient_data else {}
+            query_text = self._build_query_text(context, entities, query)
             
-            # Get DB connection here, as it's needed for fallback or details fetching
-            conn = self._get_db_connection()
-            if not conn:
-                return {"status": "error", "message": "Could not connect to the trial database."}
-
-            # Use fallback search if vector search is unavailable or returns no results
+            # Perform vector search
+            nct_ids = self._vector_search_trials(query_text=query_text)
+            
+            # Use fallback search if vector search returns no results
             if not nct_ids:
-                logging.warning("Vector search returned no results or failed. Attempting fallback search.")
-                nct_ids = self._fallback_search_trials(conn, query=query, limit=10)
+                logging.warning("Vector search returned no results. Attempting fallback search.")
+                nct_ids = self._fallback_search_trials(query=query, limit=10)
             
             if not nct_ids:
                 return {
@@ -699,8 +658,8 @@ class ClinicalTrialAgent(AgentInterface):
                     "found_trials": []
                 }
 
-            # 2. Fetch trial details from SQLite
-            found_trials_details = self._fetch_trial_details(conn, nct_ids)
+            # Fetch trial details
+            found_trials_details = self._fetch_trial_details(nct_ids)
 
             if not found_trials_details:
                 return {
@@ -709,7 +668,7 @@ class ClinicalTrialAgent(AgentInterface):
                     "found_trials": []
                 }
             
-            # 3. Perform LLM Assessment if patient context is provided
+            # Perform LLM Assessment if patient context is provided
             if patient_data:
                 logging.info(f"Patient context provided. Performing LLM assessment for {len(found_trials_details)} trials.")
                 
@@ -722,53 +681,17 @@ class ClinicalTrialAgent(AgentInterface):
                     "trials_with_assessment": assessed_trials 
                 }
             else:
-                # If no patient context, just return the found trials
+                # Return trials without assessment
                 logging.info("No patient context provided. Returning trial details without assessment.")
                 return {
                     "status": "success", 
                     "message": f"Found {len(found_trials_details)} trials.",
                     "found_trials": found_trials_details
                 }
-        finally:
-            # Ensure the connection is closed at the end of the request
-            if conn:
-                conn.close()
-                logging.info("SQLite connection closed at the end of agent run.")
 
-# Example Usage (for testing) - Keep commented out unless needed for direct testing
-# if __name__ == '__main__':
-#     import asyncio
-#     import json
-#
-#     async def main():
-#         agent = ClinicalTrialAgent()
-#
-#         # Ensure model and DB are loaded
-#         if not agent.embedding_model or not agent.astra_collection:
-#              print("Agent initialization failed. Exiting.")
-#              return
-#
-#         # Example 1: Using patient context (requires relevant data in DB)
-#         ctx1 = {"patient_data": {
-#                    "diagnosis": {"primary": "Advanced Follicular Lymphoma", "stage": "IV"},
-#                    "biomarkers": ["High Tumor Burden", "FLIPI 4"],
-#                    "prior_treatments": []
-#                 }}
-#         kw1 = {"prompt": "Find trials for this follicular lymphoma patient"}
-#         print("\\n--- Running Test 1: Patient Context ---")
-#         res1 = await agent.run(ctx1, **kw1)
-#         print("Result 1:")
-#         pprint.pprint(res1)
-#         
-#         # Example 2: Specifying criteria in prompt/entities
-#         ctx2 = {"patient_data": {}}
-#         kw2 = {
-#             "prompt": "Find phase 1 AKT mutation trials",
-#             "entities": {"condition": "solid tumors with AKT mutation", "trial_phase": "1"}
-#         }
-#         print("\\n--- Running Test 2: Entities/Prompt ---")
-#         res2 = await agent.run(ctx2, **kw2)
-#         print("Result 2:")
-#         pprint.pprint(res2)
-#         
-#     asyncio.run(main()) 
+        except Exception as e:
+            logging.error(f"Error in ClinicalTrialAgent.run: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"An error occurred while searching for trials: {str(e)}"
+            }

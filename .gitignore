@@ -101,3 +101,13 @@ Thumbs.db
 variant-analysis-evo2-main/
 CRISPResso2-master copy/
 CRISPResso2-master/
+
+dev-debug.log
+# Dependency directories
+node_modules/
+.vscode
+# OS specific
+
+# Task files
+# tasks.json
+# tasks/ 

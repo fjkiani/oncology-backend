@@ -1,0 +1,104 @@
+Product Requirements Document: Clinical Trial Data Pipeline & Production Database
+
+Document Owner: Nabhan Mazid
+Status: Defined
+Last Updated: July 2, 2025
+Project Phases: 1, 2, 3, 4
+
+1. Introduction & Problem Statement
+Our clinical trial matching feature currently relies on a static, incomplete, and locally-stored dataset. This prevents our clinicians and AI agents from accessing the most current and comprehensive trial information, limiting the feature's accuracy and utility.
+
+This project will replace the existing local data store with a robust, cloud-based production database system. It will create an automated data pipeline that fetches all available clinical trials directly from the National Cancer Institute (NCI) API on a nightly basis, ensuring our data is always fresh, complete, and scalable.
+
+2. Goals & Objectives
+- Data Freshness: Ensure the clinical trial data used by the application is never more than 24 hours old.
+- Data Comprehensiveness: Ingest the entirety of the NCI clinical trials database (~540,000+ trials) instead of a limited subset.
+- Scalability & Reliability: Migrate from a file-based local database (ChromaDB) to a production-grade, cloud-native architecture (SQLite for metadata, AstraDB for vectors) that can handle the full dataset and operate without manual intervention.
+- Maintainability: Centralize database connection logic and create a clearly defined, logged, and scheduled pipeline script.
+
+3. Scope & Key Deliverables
+In Scope:
+- Production Database Setup: A provisioned and configured cloud vector database (AstraDB) and a cloud-accessible SQLite database.
+- Centralized Connection Module: A new Python module (backend/utils/database_connections.py) for reusable database connection logic.
+- ETL Pipeline Script: A Python script (backend/scripts/load_trials_from_api.py) that performs the full Extract, Transform, and Load process.
+- Automation Scripts: A shell script wrapper (run_pipeline.sh) and a corresponding cron job for nightly execution.
+- Application Integration: Refactoring the existing ClinicalTrialAgent to query the new production databases.
+
+Out of Scope (for this PRD):
+- Any new user-facing frontend features (e.g., the "Clinical Trials Browser" from Phase 5).
+- Changes to the UI other than what is necessary to display data from the new backend.
+- Implementation of an incremental (delta) update strategy; the defined strategy is "wipe and reload."
+
+4. Functional & Technical Requirements
+
+Phase 1: Database Setup & Migration
+REQ-1.1: A new cloud vector database instance shall be provisioned on DataStax AstraDB.
+REQ-1.2: Database credentials (API Endpoint, Token) must be stored securely as environment variables (e.g., in a .env file) and must not be committed to the codebase.
+REQ-1.3: A new Python module, backend/utils/database_connections.py, shall be created to provide centralized functions for connecting to both the metadata (SQLite) and vector (AstraDB) databases.
+REQ-1.4: The connection functions must read credentials from environment variables.
+
+Phase 2: Build the Core Data Pipeline Script
+REQ-2.1 (Extract): The pipeline script must fetch all trial data from the NCI API (https://clinicaltrialsapi.cancer.gov/api/v2/trials).
+- It must handle pagination correctly using the size and from parameters.
+- It must include a polite delay (e.g., time.sleep(0.5)) between API calls.
+
+REQ-2.2 (Transform): For each trial fetched:
+- Parse the JSON response to extract structured metadata (e.g., NCT ID, title, status, phase).
+- Extract the unstructured eligibilityCriteria text.
+- Generate a vector embedding from the eligibilityCriteria text using a SentenceTransformer model.
+
+REQ-2.3 (Load): The script shall implement a "wipe and reload" strategy.
+- At the start of a run, all existing data in the target tables must be deleted/truncated.
+- Structured metadata shall be loaded into the SQLite trials table.
+- The vector embedding and the original criteria text shall be loaded into the AstraDB trial_vectors table, linked by nct_id.
+
+REQ-2.4 (Logging): The script must use Python's logging module to output detailed status updates (e.g., "Fetching page X of Y," "Loading trial NCT12345") to both the console and a log file.
+
+Phase 3: Automation & Scheduling
+REQ-3.1: A wrapper shell script (run_pipeline.sh) shall be created. It must be responsible for navigating to the project directory, activating the Python virtual environment, and executing the pipeline script.
+REQ-3.2: The shell script must redirect all stdout and stderr from the Python script to a persistent log file (e.g., /var/log/oncology_copilot/trials_pipeline.log).
+REQ-3.3: A cron job shall be configured on the production server to execute run_pipeline.sh nightly at 2:00 AM.
+
+Phase 4: Application Integration & Final Testing
+REQ-4.1: The backend/agents/clinical_trial_agent.py must be refactored to use the new database_connections.py module to connect to AstraDB and SQLite.
+REQ-4.2: The agent's search logic must be updated to generate a query embedding and perform a vector similarity search against the AstraDB database.
+REQ-4.3: The local ChromaDB dependency and connection logic must be removed from the agent.
+
+5. Testing & Acceptance Criteria
+AC-1.1 (Phase 1): A test script (test_db_connection.py) successfully connects to both SQLite and the new AstraDB instance using the centralized connection module. A test that creates, reads, and deletes a sample vector in AstraDB passes.
+
+AC-2.1 (Phase 2): A staged integration test of the pipeline script (limited to 100 trials) runs to completion without errors.
+AC-2.2 (Phase 2): After the staged run, the SQLite database contains exactly 100 records, and the AstraDB collection contains 100 vectors. The data for a randomly selected trial matches the official NCI website.
+
+AC-3.1 (Phase 3): The run_pipeline.sh script executes the full pipeline successfully when run manually from the command line.
+AC-3.2 (Phase 3): A test cron job (e.g., scheduled 5 minutes in the future) triggers the script, and the output is correctly appended to the log file.
+
+AC-4.1 (Phase 4): An end-to-end system test, initiated from the application's UI, successfully performs a patient-to-trial match using the ClinicalTrialAgent, and the results returned are verifiably from the new, comprehensive NCI dataset.
+
+6. Success Metrics
+- Data Freshness: The "last updated" timestamp in the database is consistently less than 24 hours old.
+- Data Volume: The production trials table in SQLite contains a number of records close to the total reported by the NCI API (e.g., > 500,000).
+- Reliability: The nightly pipeline job has a success rate of >99% over a 30-day period.
+- Performance: The ClinicalTrialAgent's search function response time is benchmarked and remains within an acceptable threshold (e.g., < 2 seconds for a p95 response).
+
+7. Technical Architecture
+- SQLite Database: Stores structured trial metadata (NCT ID, title, status, phase, etc.)
+- AstraDB Vector Database: Stores trial eligibility criteria embeddings for semantic search
+- ETL Pipeline: Python script that extracts from NCI API, transforms data, and loads to both databases
+- Connection Module: Centralized database connection management
+- Automation: Shell script wrapper and cron job for scheduled execution
+- Application Integration: Updated ClinicalTrialAgent to use new database architecture
+
+8. Dependencies
+- NCI Clinical Trials API access
+- AstraDB cloud database instance
+- Python environment with required packages (sentence-transformers, astrapy, requests, etc.)
+- Production server with cron job capability
+- Environment variables for secure credential management
+
+9. Risk Mitigation
+- API Rate Limiting: Implement polite delays between API calls
+- Data Volume: Test with staged data loads before full implementation
+- Database Performance: Monitor query performance and optimize as needed
+- Pipeline Reliability: Implement comprehensive logging and error handling
+- Backup Strategy: Maintain backup of critical data and pipeline scripts 

@@ -1,0 +1,538 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": 1,
+        "title": "Provision AstraDB Vector Database",
+        "description": "Set up a cloud vector database instance on DataStax AstraDB for storing trial eligibility criteria embeddings.",
+        "details": "1. Create an account on DataStax Astra (https://astra.datastax.com) if not already available\n2. Provision a new vector database instance with appropriate region and capacity\n3. Create a new keyspace named 'clinical_trials'\n4. Create a collection named 'trial_vectors' within the keyspace\n5. Generate an application token with appropriate permissions\n6. Document the API endpoint, token, and connection details\n7. Test the connection by creating and retrieving a sample vector",
+        "testStrategy": "Create a simple Python script that connects to the AstraDB instance, inserts a test vector, retrieves it via ID, performs a simple similarity search, and then deletes the test vector. Verify all operations complete successfully.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "AstraDB Account Setup and Database Creation",
+            "description": "Create an AstraDB account and provision a new database instance",
+            "dependencies": [],
+            "details": "1. Sign up for an AstraDB account at https://astra.datastax.com\n2. Verify email and complete account setup\n3. Create a new database with appropriate region and capacity settings\n4. Note down the database ID and region for future reference\n5. Generate and securely store API credentials (token)",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Collection Configuration and Schema Definition",
+            "description": "Set up collections and define schema structure for the database",
+            "dependencies": [
+              1
+            ],
+            "details": "1. Navigate to the database dashboard\n2. Create necessary collections based on data requirements\n3. Define schema structure including primary keys and indexes\n4. Configure appropriate TTL (Time To Live) settings if needed\n5. Set up any required secondary indexes for query optimization",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Connection Testing and Documentation",
+            "description": "Test database connections and document setup details",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "1. Use the Astra DB API to test connection from development environment\n2. Verify read/write operations work correctly\n3. Document connection strings, API endpoints, and authentication methods\n4. Create a README with setup instructions for team members\n5. Document any configuration decisions and rationale",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Create SQLite Database Schema",
+        "description": "Design and implement the SQLite database schema for storing structured clinical trial metadata.",
+        "details": "1. Create a new SQLite database file in an appropriate cloud-accessible location\n2. Define the trials table schema with columns for:\n   - nct_id (PRIMARY KEY)\n   - title\n   - status\n   - phase\n   - study_type\n   - conditions (TEXT, JSON formatted)\n   - locations (TEXT, JSON formatted)\n   - last_updated_date\n   - brief_summary\n   - detailed_description\n   - eligibility_criteria (TEXT)\n   - other relevant metadata fields from the NCI API\n3. Create appropriate indexes for frequently queried fields\n4. Add a metadata table to track pipeline execution timestamps",
+        "testStrategy": "Write a test script that creates the database schema, inserts sample records, performs various queries to validate the schema design, and verifies that all required fields can be properly stored and retrieved.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Design and create SQLite database tables",
+            "description": "Design and implement the database schema by creating tables with appropriate data types, primary keys, foreign keys, and constraints.",
+            "dependencies": [],
+            "details": "1. Create a main table for storing the primary data with proper field definitions\n2. Create a metadata table if needed for additional information\n3. Define appropriate data types for each column (INTEGER, TEXT, REAL, etc.)\n4. Implement primary key constraints\n5. Add foreign key constraints where relationships exist\n6. Set up NOT NULL constraints for required fields\n7. Add DEFAULT values where appropriate\n8. Document the schema design with comments",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Create indexes and optimize for query performance",
+            "description": "Implement database indexes to improve query performance and analyze query patterns for optimization.",
+            "dependencies": [
+              1
+            ],
+            "details": "1. Identify columns frequently used in WHERE clauses\n2. Create indexes on these columns to speed up queries\n3. Consider composite indexes for multi-column queries\n4. Add indexes on foreign key columns\n5. Test query performance with and without indexes\n6. Analyze EXPLAIN QUERY PLAN output to verify index usage\n7. Balance between read performance and write overhead\n8. Document all created indexes and their purposes",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Implement Database Connection Module",
+        "description": "Create a centralized Python module for database connection logic that securely handles credentials and provides reusable connection functions.",
+        "details": "1. Create the file backend/utils/database_connections.py\n2. Implement functions for:\n   - get_sqlite_connection(): Returns a connection to the SQLite database\n   - get_astradb_connection(): Returns a connection to the AstraDB vector database\n3. Use environment variables for all credentials and connection strings\n4. Add proper error handling and connection pooling where appropriate\n5. Implement a function to close connections properly\n6. Add docstrings and type hints for all functions\n7. Include a simple test function within the module to verify connections\n\nExample code structure:\n```python\nimport os\nimport sqlite3\nfrom astrapy.db import AstraDB\nfrom dotenv import load_dotenv\n\nload_dotenv()\n\ndef get_sqlite_connection():\n    \"\"\"Returns a connection to the SQLite database.\"\"\"\n    db_path = os.getenv('SQLITE_DB_PATH')\n    if not db_path:\n        raise ValueError(\"SQLITE_DB_PATH environment variable not set\")\n    return sqlite3.connect(db_path)\n\ndef get_astradb_connection():\n    \"\"\"Returns a connection to the AstraDB vector database.\"\"\"\n    astra_token = os.getenv('ASTRA_TOKEN')\n    astra_endpoint = os.getenv('ASTRA_API_ENDPOINT')\n    if not astra_token or not astra_endpoint:\n        raise ValueError(\"ASTRA_TOKEN or ASTRA_API_ENDPOINT environment variables not set\")\n    return AstraDB(token=astra_token, api_endpoint=astra_endpoint)\n```",
+        "testStrategy": "Create a test script (test_db_connection.py) that imports the module and attempts to connect to both databases. Verify that connections are established successfully and that appropriate error messages are displayed when environment variables are missing or incorrect.",
+        "priority": "high",
+        "dependencies": [
+          1,
+          2
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Environment Configuration and Credential Management",
+            "description": "Set up environment variables and secure credential management for database connections",
+            "dependencies": [],
+            "details": "Create a configuration system that loads database credentials from environment variables or secure configuration files. Implement proper encryption for sensitive data. Create a validation mechanism to ensure all required credentials are present before attempting connections. Document the required environment variables and configuration format.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "SQLite Connection Implementation",
+            "description": "Implement SQLite database connection with proper error handling and connection pooling",
+            "dependencies": [
+              1
+            ],
+            "details": "Create a module for SQLite connections that includes connection pooling for performance. Implement comprehensive error handling for connection failures, timeouts, and query errors. Add reconnection logic with exponential backoff. Create helper methods for common database operations. Include proper resource cleanup to prevent memory leaks.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "AstraDB Connection Implementation",
+            "description": "Implement AstraDB connection with proper error handling and connection management",
+            "dependencies": [
+              1
+            ],
+            "details": "Create a module for AstraDB connections that handles authentication with the Astra API. Implement comprehensive error handling for connection failures, timeouts, and query errors. Add reconnection logic with exponential backoff. Create helper methods for common database operations. Ensure proper handling of AstraDB-specific features and limitations. Include proper resource cleanup to prevent memory leaks.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Implement Extract Function for NCI API",
+        "description": "Develop the extraction component of the ETL pipeline that fetches clinical trial data from the NCI API with proper pagination and rate limiting.",
+        "details": "1. Create a function in backend/scripts/load_trials_from_api.py to handle the extraction process\n2. Implement pagination using the 'size' and 'from' parameters\n3. Add polite delays between API calls (0.5 seconds as specified)\n4. Handle API errors and implement retries with exponential backoff\n5. Set up proper logging for the extraction process\n6. Return the extracted data in a structured format\n\nExample implementation:\n```python\nimport requests\nimport time\nimport logging\nfrom typing import List, Dict, Any\n\nlogger = logging.getLogger(__name__)\n\ndef extract_trials_from_nci_api(page_size: int = 50) -> List[Dict[str, Any]]:\n    \"\"\"Extract clinical trial data from the NCI API with pagination.\"\"\"\n    base_url = \"https://clinicaltrialsapi.cancer.gov/api/v2/trials\"\n    all_trials = []\n    from_index = 0\n    total_trials = None\n    \n    while total_trials is None or from_index < total_trials:\n        logger.info(f\"Fetching trials from index {from_index}\")\n        response = requests.get(\n            base_url,\n            params={\"size\": page_size, \"from\": from_index}\n        )\n        \n        if response.status_code != 200:\n            logger.error(f\"API request failed with status {response.status_code}\")\n            raise Exception(f\"API request failed: {response.text}\")\n        \n        data = response.json()\n        \n        if total_trials is None:\n            total_trials = data.get(\"total\", 0)\n            logger.info(f\"Total trials to fetch: {total_trials}\")\n        \n        trials = data.get(\"trials\", [])\n        all_trials.extend(trials)\n        logger.info(f\"Fetched {len(trials)} trials. Total fetched so far: {len(all_trials)}\")\n        \n        from_index += page_size\n        \n        # Polite delay between API calls\n        time.sleep(0.5)\n    \n    return all_trials\n```",
+        "testStrategy": "Create a test function that calls the extract function with a small page size and limited number of pages. Verify that the correct number of trials are fetched, pagination works correctly, and the delay between requests is respected. Also test error handling by simulating API failures.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Basic NCI API Request Function",
+            "description": "Create a core function that can make basic HTTP requests to the NCI API endpoints with proper authentication and parameter handling.",
+            "dependencies": [],
+            "details": "Implement a function that: 1) Accepts endpoint URL and query parameters, 2) Handles authentication headers if required, 3) Makes HTTP requests using appropriate library (requests, httpx, etc.), 4) Parses and returns JSON responses, 5) Includes proper documentation and type hints.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Add Pagination Support to API Requests",
+            "description": "Extend the basic API function to handle paginated responses from the NCI API.",
+            "dependencies": [
+              1
+            ],
+            "details": "Modify the API request function to: 1) Detect if response is paginated, 2) Implement logic to fetch all pages of results, 3) Combine results from multiple pages, 4) Add options to limit the number of pages retrieved, 5) Include progress tracking for multi-page requests.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement Rate Limiting and Polite Delays",
+            "description": "Add rate limiting functionality to prevent overwhelming the NCI API and ensure compliance with usage policies.",
+            "dependencies": [
+              1
+            ],
+            "details": "Enhance the API client with: 1) Configurable delay between requests, 2) Detection of rate limit headers from API responses, 3) Dynamic adjustment of delays based on API response times, 4) Implementation of a request queue if needed, 5) Logging of request timing information.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Develop Error Handling and Retry Logic",
+            "description": "Implement robust error handling with intelligent retry mechanisms for failed API requests.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Add error handling that: 1) Identifies different types of API errors (server errors, authentication issues, etc.), 2) Implements exponential backoff for retries, 3) Sets maximum retry attempts, 4) Logs detailed error information, 5) Provides meaningful error messages to calling code, 6) Handles edge cases like partial data retrieval.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Implement Transform Function for Trial Data",
+        "description": "Develop the transformation component of the ETL pipeline that parses JSON responses, extracts structured metadata, and generates vector embeddings from eligibility criteria.",
+        "details": "1. Create a function in backend/scripts/load_trials_from_api.py to handle the transformation process\n2. Parse the JSON response to extract structured metadata fields\n3. Extract the unstructured eligibility criteria text\n4. Generate vector embeddings using SentenceTransformer\n5. Return both structured metadata and vector embeddings\n\nExample implementation:\n```python\nfrom sentence_transformers import SentenceTransformer\nfrom typing import Dict, Any, Tuple, List\nimport logging\n\nlogger = logging.getLogger(__name__)\n\ndef transform_trial_data(trials: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:\n    \"\"\"Transform trial data by extracting metadata and generating embeddings.\"\"\"\n    # Load the sentence transformer model\n    model = SentenceTransformer('all-MiniLM-L6-v2')\n    \n    transformed_data = []\n    \n    for trial in trials:\n        try:\n            # Extract structured metadata\n            nct_id = trial.get(\"nct_id\")\n            if not nct_id:\n                logger.warning(\"Trial missing NCT ID, skipping\")\n                continue\n                \n            metadata = {\n                \"nct_id\": nct_id,\n                \"title\": trial.get(\"brief_title\", \"\"),\n                \"status\": trial.get(\"current_trial_status\", \"\"),\n                \"phase\": trial.get(\"phase\", {}).get(\"phase\", \"\"),\n                \"study_type\": trial.get(\"study_type\", \"\"),\n                \"conditions\": str(trial.get(\"diseases\", [])),\n                \"locations\": str(trial.get(\"sites\", [])),\n                \"last_updated_date\": trial.get(\"last_update_posted\", \"\"),\n                \"brief_summary\": trial.get(\"brief_summary\", \"\"),\n                \"detailed_description\": trial.get(\"detailed_description\", \"\"),\n                \"eligibility_criteria\": trial.get(\"eligibility\", {}).get(\"criteria\", \"\")\n            }\n            \n            # Generate embedding from eligibility criteria\n            criteria_text = metadata[\"eligibility_criteria\"]\n            if not criteria_text:\n                logger.warning(f\"Trial {nct_id} missing eligibility criteria, using title instead\")\n                criteria_text = metadata[\"title\"]\n                \n            embedding = model.encode(criteria_text).tolist()\n            \n            vector_data = {\n                \"nct_id\": nct_id,\n                \"embedding\": embedding,\n                \"criteria_text\": criteria_text\n            }\n            \n            transformed_data.append((metadata, vector_data))\n            \n        except Exception as e:\n            logger.error(f\"Error transforming trial {trial.get('nct_id', 'unknown')}: {str(e)}\")\n    \n    return transformed_data\n```",
+        "testStrategy": "Create a test function with sample trial data from the NCI API. Verify that metadata is correctly extracted, all required fields are present, and vector embeddings are successfully generated with the expected dimensions. Test handling of missing or malformed data.",
+        "priority": "high",
+        "dependencies": [
+          4
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement JSON parsing and metadata extraction",
+            "description": "Create functions to parse clinical trial JSON data and extract relevant metadata fields such as trial ID, title, phase, conditions, and interventions.",
+            "dependencies": [],
+            "details": "Develop robust parsing functions that can handle the clinical trial JSON structure. Extract and normalize key metadata fields including trial identifiers, study phase, conditions being studied, intervention types, and sponsor information. Include validation to ensure required fields are present.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Develop eligibility criteria text extraction",
+            "description": "Create functions to extract and clean inclusion and exclusion criteria text from the clinical trial data.",
+            "dependencies": [
+              1
+            ],
+            "details": "Implement methods to locate and extract both inclusion and exclusion criteria text from the parsed JSON. Clean the extracted text by removing unnecessary formatting, standardizing whitespace, and handling special characters. Create a unified representation of eligibility criteria that maintains the distinction between inclusion and exclusion criteria.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement vector embedding generation with SentenceTransformer",
+            "description": "Create functions to generate vector embeddings for eligibility criteria using SentenceTransformer.",
+            "dependencies": [
+              2
+            ],
+            "details": "Initialize the SentenceTransformer model with an appropriate pre-trained model. Develop functions to convert the cleaned eligibility criteria text into vector embeddings. Implement batching for efficient processing of multiple trials. Ensure the embedding dimensions are consistent and properly formatted for downstream use.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Implement comprehensive error handling",
+            "description": "Add robust error handling for malformed or missing data throughout the transformation pipeline.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "Implement exception handling for JSON parsing errors, missing required fields, and malformed eligibility criteria. Create graceful fallbacks when encountering partial or corrupted data. Add logging for error cases to facilitate debugging. Ensure the transformation function can process batches of trials even when some individual trials have issues.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Implement Load Function for Database Storage",
+        "description": "Develop the load component of the ETL pipeline that implements the 'wipe and reload' strategy, storing structured metadata in SQLite and vector embeddings in AstraDB.",
+        "details": "1. Create a function in backend/scripts/load_trials_from_api.py to handle the loading process\n2. Implement the 'wipe and reload' strategy by truncating existing data\n3. Load structured metadata into SQLite\n4. Load vector embeddings into AstraDB\n5. Add transaction handling and error recovery\n\nExample implementation:\n```python\nimport sqlite3\nfrom typing import List, Tuple, Dict, Any\nimport logging\nfrom ..utils.database_connections import get_sqlite_connection, get_astradb_connection\n\nlogger = logging.getLogger(__name__)\n\ndef load_trial_data(transformed_data: List[Tuple[Dict[str, Any], Dict[str, Any]]]) -> None:\n    \"\"\"Load transformed trial data into SQLite and AstraDB.\"\"\"\n    # Get database connections\n    sqlite_conn = get_sqlite_connection()\n    astra_db = get_astradb_connection()\n    collection = astra_db.collection('trial_vectors')\n    \n    try:\n        # Wipe existing data in SQLite\n        logger.info(\"Truncating existing data in SQLite\")\n        cursor = sqlite_conn.cursor()\n        cursor.execute(\"DELETE FROM trials\")\n        sqlite_conn.commit()\n        \n        # Wipe existing data in AstraDB\n        logger.info(\"Truncating existing data in AstraDB\")\n        # Note: This is a simplification. In practice, you might need to use\n        # AstraDB's API to delete all documents or recreate the collection\n        collection.delete_many({\"$and\": [{\"_id\": {\"$exists\": True}}]})\n        \n        # Load metadata into SQLite\n        logger.info(f\"Loading {len(transformed_data)} trials into SQLite\")\n        for metadata, _ in transformed_data:\n            placeholders = ', '.join(['?'] * len(metadata))\n            columns = ', '.join(metadata.keys())\n            sql = f\"INSERT INTO trials ({columns}) VALUES ({placeholders})\"\n            cursor.execute(sql, list(metadata.values()))\n            \n        sqlite_conn.commit()\n        logger.info(\"SQLite load completed successfully\")\n        \n        # Load vectors into AstraDB\n        logger.info(f\"Loading {len(transformed_data)} vectors into AstraDB\")\n        for _, vector_data in transformed_data:\n            nct_id = vector_data[\"nct_id\"]\n            embedding = vector_data[\"embedding\"]\n            criteria_text = vector_data[\"criteria_text\"]\n            \n            collection.insert_one({\n                \"_id\": nct_id,\n                \"$vector\": embedding,\n                \"criteria_text\": criteria_text\n            })\n            \n        logger.info(\"AstraDB load completed successfully\")\n        \n    except Exception as e:\n        logger.error(f\"Error loading data: {str(e)}\")\n        sqlite_conn.rollback()\n        raise\n    finally:\n        sqlite_conn.close()\n```",
+        "testStrategy": "Create a test function that loads a small set of transformed trial data into test databases. Verify that the 'wipe and reload' strategy works correctly, all data is properly stored in both databases, and error handling functions as expected. Test with both valid and invalid data.",
+        "priority": "high",
+        "dependencies": [
+          2,
+          3,
+          5
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement SQLite data loading with transaction handling",
+            "description": "Create a function to load data into SQLite database with proper transaction handling to ensure data consistency.",
+            "dependencies": [],
+            "details": "- Implement a function that opens a SQLite connection\n- Set up transaction boundaries with BEGIN and COMMIT statements\n- Create batch processing for efficient data loading\n- Implement prepared statements for performance\n- Add logging for transaction progress\n- Handle SQLite-specific constraints and errors",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Implement AstraDB vector data loading",
+            "description": "Create a function to load vector data into AstraDB with proper error handling and batch processing.",
+            "dependencies": [],
+            "details": "- Implement connection handling for AstraDB\n- Create batch processing for vector data\n- Implement retry logic for failed operations\n- Add progress tracking and logging\n- Handle AstraDB-specific rate limits and constraints\n- Optimize vector insertion performance",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement 'wipe and reload' strategy",
+            "description": "Create a coordinated function that safely wipes both databases and reloads data while maintaining consistency.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "- Implement database wiping functions for both SQLite and AstraDB\n- Create a coordination function that ensures proper sequencing\n- Add validation checks before wiping data\n- Implement configuration options for selective wiping\n- Add safety mechanisms to prevent accidental data loss\n- Create detailed logging of the wipe and reload process",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Implement error recovery and rollback mechanisms",
+            "description": "Create robust error handling that can detect failures and roll back changes to maintain database consistency.",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "- Implement transaction rollback for SQLite on errors\n- Create compensation logic for AstraDB operations\n- Implement state tracking to determine rollback points\n- Add detailed error logging and diagnostics\n- Create recovery mechanisms for interrupted operations\n- Implement verification steps to confirm database consistency after operations",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Create Main ETL Pipeline Script",
+        "description": "Integrate the extract, transform, and load components into a complete ETL pipeline script with proper logging, error handling, and execution flow.",
+        "details": "1. Create the main script at backend/scripts/load_trials_from_api.py\n2. Set up comprehensive logging to both console and file\n3. Integrate the extract, transform, and load functions\n4. Add command-line arguments for configuration\n5. Implement proper error handling and exit codes\n6. Add execution time tracking and summary statistics\n\nExample implementation:\n```python\n#!/usr/bin/env python3\nimport argparse\nimport logging\nimport time\nimport sys\nfrom datetime import datetime\n\n# Setup logging\ndef setup_logging(log_file=None):\n    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'\n    handlers = [logging.StreamHandler()]\n    \n    if log_file:\n        handlers.append(logging.FileHandler(log_file))\n        \n    logging.basicConfig(\n        level=logging.INFO,\n        format=log_format,\n        handlers=handlers\n    )\n\ndef main():\n    parser = argparse.ArgumentParser(description='Load clinical trials from NCI API')\n    parser.add_argument('--log-file', help='Path to log file')\n    parser.add_argument('--page-size', type=int, default=50, help='API page size')\n    parser.add_argument('--limit', type=int, help='Limit number of trials (for testing)')\n    args = parser.parse_args()\n    \n    setup_logging(args.log_file)\n    logger = logging.getLogger(__name__)\n    \n    start_time = time.time()\n    logger.info(f\"Pipeline started at {datetime.now().isoformat()}\")\n    \n    try:\n        # Extract data from API\n        logger.info(\"Starting extraction phase\")\n        trials = extract_trials_from_nci_api(page_size=args.page_size)\n        \n        if args.limit and args.limit > 0:\n            logger.info(f\"Limiting to {args.limit} trials for testing\")\n            trials = trials[:args.limit]\n            \n        logger.info(f\"Extracted {len(trials)} trials\")\n        \n        # Transform data\n        logger.info(\"Starting transformation phase\")\n        transformed_data = transform_trial_data(trials)\n        logger.info(f\"Transformed {len(transformed_data)} trials\")\n        \n        # Load data into databases\n        logger.info(\"Starting load phase\")\n        load_trial_data(transformed_data)\n        \n        elapsed_time = time.time() - start_time\n        logger.info(f\"Pipeline completed successfully in {elapsed_time:.2f} seconds\")\n        return 0\n        \n    except Exception as e:\n        logger.error(f\"Pipeline failed: {str(e)}\")\n        return 1\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n```",
+        "testStrategy": "Test the script with various command-line arguments, including a small limit for testing purposes. Verify that all phases execute correctly, logging works as expected, and the script returns appropriate exit codes for success and failure scenarios. Test error handling by simulating failures in each phase.",
+        "priority": "high",
+        "dependencies": [
+          4,
+          5,
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement command-line interface and configuration",
+            "description": "Create a robust CLI for the ETL pipeline with configuration management capabilities",
+            "dependencies": [],
+            "details": "Develop a command-line interface that allows users to specify input/output paths, transformation options, and other pipeline parameters. Implement configuration handling using a combination of command-line arguments, environment variables, and configuration files. Include validation for all configuration options and provide helpful error messages for invalid configurations. Document all available options and their default values.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Integrate extract, transform, and load components",
+            "description": "Connect the previously implemented ETL components into a cohesive execution flow",
+            "dependencies": [
+              1
+            ],
+            "details": "Create the main pipeline script that orchestrates the execution of extract, transform, and load components. Implement proper data flow between components, ensuring that outputs from one stage are correctly passed to the next. Add execution control mechanisms like conditional processing, retry logic, and transaction management where appropriate. Include progress tracking and performance monitoring to provide visibility into the pipeline execution.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Implement comprehensive logging and error handling",
+            "description": "Add robust logging and error handling throughout the ETL pipeline",
+            "dependencies": [
+              2
+            ],
+            "details": "Implement a consistent logging framework across the entire pipeline with configurable verbosity levels. Add detailed error handling with appropriate exception types, meaningful error messages, and recovery mechanisms where possible. Implement graceful failure modes that preserve data integrity and provide clear information about failure causes. Add pipeline status reporting that summarizes successful and failed operations, with detailed diagnostics for troubleshooting.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Create Shell Script Wrapper and Cron Job",
+        "description": "Develop a shell script wrapper for the ETL pipeline and configure a cron job for nightly execution at 2:00 AM.",
+        "details": "1. Create run_pipeline.sh in the project root directory\n2. Make the script navigate to the project directory\n3. Activate the Python virtual environment\n4. Execute the pipeline script with appropriate arguments\n5. Redirect stdout and stderr to a log file\n6. Set up a cron job to run the script nightly at 2:00 AM\n\nExample shell script:\n```bash\n#!/bin/bash\n\n# Set variables\nPROJECT_DIR=\"/path/to/project\"\nVENV_DIR=\"$PROJECT_DIR/venv\"\nLOG_DIR=\"/var/log/oncology_copilot\"\nLOG_FILE=\"$LOG_DIR/trials_pipeline.log\"\n\n# Create log directory if it doesn't exist\nmkdir -p \"$LOG_DIR\"\n\n# Navigate to project directory\ncd \"$PROJECT_DIR\" || {\n  echo \"Failed to change to project directory\" >> \"$LOG_FILE\"\n  exit 1\n}\n\n# Activate virtual environment\nsource \"$VENV_DIR/bin/activate\" || {\n  echo \"Failed to activate virtual environment\" >> \"$LOG_FILE\"\n  exit 1\n}\n\n# Run the pipeline script\necho \"\\n\\n===== Pipeline started at $(date) =====\" >> \"$LOG_FILE\"\npython -m backend.scripts.load_trials_from_api --log-file \"$LOG_FILE\" 2>> \"$LOG_FILE\"\nEXIT_CODE=$?\n\n# Log completion status\nif [ $EXIT_CODE -eq 0 ]; then\n  echo \"Pipeline completed successfully at $(date)\" >> \"$LOG_FILE\"\nelse\n  echo \"Pipeline failed with exit code $EXIT_CODE at $(date)\" >> \"$LOG_FILE\"\nfi\n\n# Deactivate virtual environment\ndeactivate\n\nexit $EXIT_CODE\n```\n\nCron job setup:\n```\n# Edit crontab\ncrontab -e\n\n# Add the following line to run at 2:00 AM daily\n0 2 * * * /path/to/project/run_pipeline.sh\n```",
+        "testStrategy": "Test the shell script by running it manually and verifying that it correctly navigates to the project directory, activates the virtual environment, and executes the pipeline script. Check that output is properly redirected to the log file. Test the cron job by setting up a test job scheduled a few minutes in the future and verifying that it executes as expected.",
+        "priority": "medium",
+        "dependencies": [
+          7
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Implement Shell Script Wrapper",
+            "description": "Create a shell script that sets up the environment and includes error handling for the Python script execution",
+            "dependencies": [],
+            "details": "Create a shell script that: 1) Sets up the necessary environment variables, 2) Activates the virtual environment if needed, 3) Executes the Python script with proper error handling, 4) Logs errors and execution status, 5) Implements proper exit codes for different failure scenarios, 6) Includes comments explaining the script's functionality",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Configure and Test Cron Job",
+            "description": "Set up a cron job to run the shell script wrapper at scheduled intervals and verify its functionality",
+            "dependencies": [
+              1
+            ],
+            "details": "1) Determine the appropriate schedule for running the script, 2) Create a cron job entry using crontab -e, 3) Configure proper path and environment settings in the cron job, 4) Redirect stdout and stderr to log files, 5) Test the cron job execution to ensure it runs correctly, 6) Verify logs are being generated properly, 7) Document the cron job configuration for future reference",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Refactor ClinicalTrialAgent for New Database",
+        "description": "Update the ClinicalTrialAgent to use the new database connection module and implement vector similarity search against AstraDB.",
+        "details": "1. Modify backend/agents/clinical_trial_agent.py to use the new database_connections.py module\n2. Remove ChromaDB dependency and connection logic\n3. Implement vector similarity search against AstraDB\n4. Update the agent's search logic to generate query embeddings\n5. Ensure backward compatibility with existing API contracts\n\nExample implementation changes:\n```python\nfrom ..utils.database_connections import get_sqlite_connection, get_astradb_connection\nfrom sentence_transformers import SentenceTransformer\n\nclass ClinicalTrialAgent:\n    def __init__(self):\n        # Initialize the sentence transformer model\n        self.model = SentenceTransformer('all-MiniLM-L6-v2')\n        \n        # Remove ChromaDB initialization code\n        # self.chroma_client = chromadb.Client()\n        # self.collection = self.chroma_client.get_or_create_collection(\"trials\")\n        \n    def search_trials(self, patient_description, limit=10):\n        \"\"\"Search for clinical trials matching the patient description.\"\"\"\n        # Generate embedding for the query\n        query_embedding = self.model.encode(patient_description).tolist()\n        \n        # Get AstraDB connection and perform vector search\n        astra_db = get_astradb_connection()\n        collection = astra_db.collection('trial_vectors')\n        \n        # Perform vector similarity search\n        results = collection.vector_find(\n            vector=query_embedding,\n            limit=limit\n        )\n        \n        # Get trial metadata from SQLite for the matching trials\n        sqlite_conn = get_sqlite_connection()\n        cursor = sqlite_conn.cursor()\n        \n        trial_ids = [result[\"_id\"] for result in results]\n        placeholders = ', '.join(['?'] * len(trial_ids))\n        \n        cursor.execute(\n            f\"SELECT * FROM trials WHERE nct_id IN ({placeholders})\",\n            trial_ids\n        )\n        \n        # Format results\n        trials = []\n        for row in cursor.fetchall():\n            # Convert row to dictionary\n            columns = [desc[0] for desc in cursor.description]\n            trial = dict(zip(columns, row))\n            \n            # Add similarity score from vector search results\n            for result in results:\n                if result[\"_id\"] == trial[\"nct_id\"]:\n                    trial[\"similarity_score\"] = result[\"$similarity\"]\n                    break\n                    \n            trials.append(trial)\n            \n        # Sort by similarity score\n        trials.sort(key=lambda x: x.get(\"similarity_score\", 0), reverse=True)\n        \n        sqlite_conn.close()\n        return trials\n```",
+        "testStrategy": "Create unit tests for the refactored ClinicalTrialAgent that verify it correctly connects to both databases, performs vector similarity searches, and returns properly formatted results. Test with various patient descriptions and verify that the results match expectations. Compare results with the previous ChromaDB implementation to ensure consistency.",
+        "priority": "high",
+        "dependencies": [
+          3,
+          6
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Analyze and document current ChromaDB implementation",
+            "description": "Review the existing ClinicalTrialAgent implementation to understand how ChromaDB is currently used for vector search and document the key interfaces and functionality that need to be preserved.",
+            "dependencies": [],
+            "details": "Identify all ChromaDB dependencies in the codebase. Document the current query flow, embedding generation process, and how results are returned. Create a mapping of ChromaDB functions to their equivalent AstraDB operations. Identify potential challenges in the migration process.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Implement AstraDB vector search integration",
+            "description": "Create a new implementation for vector similarity search using AstraDB that will replace the ChromaDB functionality.",
+            "dependencies": [
+              1
+            ],
+            "details": "Develop connection handling for AstraDB. Implement vector similarity search functions that match the current functionality. Create utility functions for managing vector data in AstraDB. Ensure proper error handling and connection management. Write unit tests to verify the implementation works as expected.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Update query embedding generation process",
+            "description": "Refactor the embedding generation process to work with the new AstraDB implementation while maintaining the same vector representation quality.",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "Review the current embedding generation process. Update the code to ensure embeddings are generated in a format compatible with AstraDB. Implement any necessary transformations between the embedding model output and AstraDB input format. Ensure the embedding dimension and normalization are properly handled.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Integrate SQLite metadata retrieval",
+            "description": "Implement SQLite-based metadata retrieval to complement the vector search functionality in AstraDB.",
+            "dependencies": [
+              2
+            ],
+            "details": "Design the SQLite schema for storing clinical trial metadata. Implement functions to query SQLite for metadata based on document IDs returned from vector search. Create a unified interface that combines vector search results with metadata retrieval. Ensure efficient querying patterns to minimize latency.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Ensure backward compatibility and test end-to-end functionality",
+            "description": "Verify that the refactored ClinicalTrialAgent maintains backward compatibility with existing API contracts and performs as expected.",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "Create comprehensive tests comparing results from the old and new implementations. Verify that API signatures remain unchanged. Test edge cases and error handling. Measure and compare performance metrics between the old and new implementations. Update documentation to reflect the changes while maintaining the same usage patterns for external consumers.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "End-to-End System Testing and Deployment",
+        "description": "Perform comprehensive end-to-end testing of the entire pipeline and application integration, then deploy to production.",
+        "details": "1. Create a test plan covering all acceptance criteria:\n   - AC-1.1: Test database connections\n   - AC-2.1: Test staged pipeline run (100 trials)\n   - AC-2.2: Verify data integrity in both databases\n   - AC-3.1: Test shell script execution\n   - AC-3.2: Test cron job scheduling\n   - AC-4.1: Test end-to-end system from UI\n\n2. Set up a staging environment that mirrors production\n\n3. Execute the test plan in staging:\n   - Run the database connection test\n   - Run a staged pipeline with 100 trials\n   - Verify data in both databases\n   - Test the shell script manually\n   - Test a scheduled cron job\n   - Perform UI-initiated search tests\n\n4. Document test results and fix any issues\n\n5. Deploy to production:\n   - Set up environment variables\n   - Deploy database connection module\n   - Deploy pipeline script\n   - Deploy shell script and cron job\n   - Deploy refactored ClinicalTrialAgent\n\n6. Perform smoke tests in production\n\n7. Monitor the first full pipeline run\n\n8. Document the deployment and handover to operations team",
+        "testStrategy": "Create a comprehensive test suite that covers all acceptance criteria. Execute tests in a staging environment that closely mirrors production. Document all test results and issues. After deployment to production, perform smoke tests to verify basic functionality, then monitor the first full pipeline run to ensure it completes successfully.",
+        "priority": "high",
+        "dependencies": [
+          7,
+          8,
+          9
+        ],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "Create Comprehensive Test Plan",
+            "description": "Develop a detailed test plan document covering all system components and integration points",
+            "dependencies": [],
+            "details": "Create a test plan that includes test cases for database operations, data pipeline functionality, UI components, API endpoints, and cross-component integration. Define acceptance criteria, testing methodologies, and required resources. Include rollback procedures and risk assessment.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 2,
+            "title": "Set Up Staging Environment",
+            "description": "Prepare a staging environment that mirrors production for comprehensive testing",
+            "dependencies": [
+              1
+            ],
+            "details": "Configure servers, databases, and network settings to match production. Deploy the latest application code, run database migrations, and configure all necessary services. Verify environment variables and ensure monitoring tools are operational.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 3,
+            "title": "Execute Database and Pipeline Tests",
+            "description": "Run tests for database operations and data pipeline functionality",
+            "dependencies": [
+              2
+            ],
+            "details": "Execute tests for database CRUD operations, schema validation, data integrity checks, and performance benchmarks. Test data pipeline for correct data transformation, error handling, and load capacity. Document all test results and address any issues found.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 4,
+            "title": "Perform UI Integration Testing",
+            "description": "Test UI components and their integration with backend services",
+            "dependencies": [
+              3
+            ],
+            "details": "Execute end-to-end UI tests covering all user workflows. Verify form validations, API interactions, state management, and responsive design. Test cross-browser compatibility and accessibility compliance. Document any bugs or issues discovered.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 5,
+            "title": "Deploy to Production Environment",
+            "description": "Execute the production deployment plan with minimal service disruption",
+            "dependencies": [
+              4
+            ],
+            "details": "Follow the deployment checklist: backup production data, schedule maintenance window, execute deployment scripts, run database migrations, verify service health, and update documentation. Have rollback plan ready in case of critical issues.",
+            "status": "pending",
+            "testStrategy": ""
+          },
+          {
+            "id": 6,
+            "title": "Conduct Post-Deployment Monitoring and Verification",
+            "description": "Monitor system performance and verify functionality after production deployment",
+            "dependencies": [
+              5
+            ],
+            "details": "Monitor system metrics, error rates, and user activity for 48 hours post-deployment. Verify critical business functions are working correctly. Conduct smoke tests on production. Document any issues and their resolutions. Prepare deployment summary report for stakeholders.",
+            "status": "pending",
+            "testStrategy": ""
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "created": "2025-07-02T05:34:58.451Z",
+      "updated": "2025-07-02T05:34:58.451Z",
+      "description": "Tasks for master context"
+    }
+  }
+}
