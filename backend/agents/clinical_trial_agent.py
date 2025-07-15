@@ -197,12 +197,12 @@ class ClinicalTrialAgent(AgentInterface):
         Uses the new database architecture.
         """
         if not self.embedding_model:
-            logging.error("Embedding model is not available. Cannot perform vector search.")
-            return []
+            logging.warning("Embedding model is not available. Skipping vector search.")
+            return None  # Return None instead of [] to indicate vector search should be skipped
             
         if not query_text:
             logging.warning("Query text is empty. Skipping vector search.")
-            return []
+            return None  # Return None to indicate vector search should be skipped
 
         try:
             logging.info(f"Performing vector search in AstraDB with query: '{query_text}'")
@@ -224,19 +224,19 @@ class ClinicalTrialAgent(AgentInterface):
             documents = list(results)
             if not documents:
                 logging.info("AstraDB vector search returned no documents.")
-                return []
+                return None  # Return None to indicate vector search should be skipped
             
             # Extract NCT IDs (stored in _id field)
             nct_ids = [doc["_id"] for doc in documents if "_id" in doc]
             
             logging.info(f"AstraDB vector search found {len(nct_ids)} trials: {nct_ids[:5]}...")
-            return nct_ids
+            return nct_ids if nct_ids else None  # Return None if no NCT IDs found
 
         except Exception as e:
             logging.error(f"AstraDB vector search failed: {e}", exc_info=True)
-            return []
+            return None  # Return None to indicate vector search should be skipped
 
-    def _fallback_search_trials(self, query: str, limit: int = 10) -> List[str]:
+    def _fallback_search_trials(self, query: str, limit: int = 20) -> List[str]:
         """
         Fallback search method that searches SQLite directly using new schema.
         """
@@ -646,10 +646,13 @@ class ClinicalTrialAgent(AgentInterface):
             # Perform vector search
             nct_ids = self._vector_search_trials(query_text=query_text)
             
-            # Use fallback search if vector search returns no results
-            if not nct_ids:
-                logging.warning("Vector search returned no results. Attempting fallback search.")
-                nct_ids = self._fallback_search_trials(query=query, limit=10)
+            # Use fallback search if vector search returns None or no results
+            if nct_ids is None:
+                logging.warning("Vector search skipped or failed. Using fallback search.")
+                nct_ids = self._fallback_search_trials(query=query, limit=20)
+            elif not nct_ids:
+                logging.warning("Vector search returned no results. Using fallback search.")
+                nct_ids = self._fallback_search_trials(query=query, limit=20)
             
             if not nct_ids:
                 return {
